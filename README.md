@@ -1,79 +1,93 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# 🛰️ Aetheris
 
-# Getting Started
+**Aetheris** is a decentralized, serverless communication node designed to function in environments where traditional internet infrastructure is unreliable, censored, or non-existent.
 
->**Note**: Make sure you have completed the [React Native - Environment Setup](https://reactnative.dev/docs/environment-setup) instructions till "Creating a new application" step, before proceeding.
+By turning every mobile device into a relay node, Aetheris creates a resilient peer-to-peer mesh network that uses **Store-Carry-Forward (SCF)** logic to move messages across physical space.
 
-## Step 1: Start the Metro Server
+---
 
-First, you will need to start **Metro**, the JavaScript _bundler_ that ships _with_ React Native.
+## 🚀 The Vision
 
-To start Metro, run the following command from the _root_ of your React Native project:
+Aetheris isn't just a chat app; it’s an exploration of **Sovereign Connectivity**.
+
+* **No Servers:** No central authority to shutdown or monitor traffic.
+* **No Accounts:** Your identity is tied to cryptographic hardware, not an email or phone number.
+* **Infrastructure-less:** Communicates via Bluetooth Low Energy (BLE) and Wi-Fi Direct.
+
+---
+
+## 🛠️ Technical Architecture
+
+### 🛡️ Security & Identity
+
+* **Hardware-Backed Identity:** Node identities are generated using **Ed25519** elliptic curve cryptography (via `libsodium`).
+* **Secure Storage:** Private keys are stored in the **Android Keystore** / **iOS Secure Enclave** using `react-native-keychain`, ensuring keys never leave the device.
+* **End-to-End Encryption:** Messages are encrypted at the source using **X25519 + ChaCha20-Poly1305**, making relay nodes "blind" to the content they carry.
+
+### 📡 Networking (Hybrid Mesh)
+
+* **Discovery Layer:** Uses **BLE (Bluetooth Low Energy)** advertising and scanning for low-power peer detection.
+* **Data Layer:** High-speed data exchange via **Wi-Fi Direct (P2P)** sockets.
+* **Routing Strategy:** Implements a **Spray-and-Wait** multi-hop protocol to propagate messages through the mesh while preventing network congestion.
+
+### 🗄️ Local-First Data
+
+* **Persistence:** Powered by **Quick-SQLite** with **Write-Ahead Logging (WAL)** for high-concurrency performance.
+* **Deduplication:** A robust "seen-message" cache prevents relay loops and redundant storage.
+
+---
+
+## 💻 Tech Stack
+
+* **Framework:** React Native (0.76+) with New Architecture (TurboModules)
+* **Native Logic:** Kotlin (Android) / Swift (iOS)
+* **Database:** Quick-SQLite
+* **State Management:** Zustand
+* **Cryptography:** libsodium (react-native-sodium)
+
+---
+
+## 🚧 Project Status: Day 1+ (In Development)
+
+Currently focused on the Android implementation:
+
+* [x] **Identity Generation:** Ed25519 keypair generation and Keystore integration.
+* [x] **Local Persistence:** Schema definition and SQLite initialization.
+* [x] **Native Bridge:** Kotlin `MeshNativeModule` for hardware access.
+* [ ] **BLE Discovery:** (In Progress) Implementation of peer scanning and advertising.
+* [ ] **Data Transfer:** (Planned) Wi-Fi Direct socket implementation.
+
+---
+
+## ⚙️ Development Setup
+
+### Prerequisites
+
+* Android NDK (Side-by-side)
+* CMake 3.10+
+* React Native CLI
+
+### Installation
 
 ```bash
-# using npm
-npm start
+# Clone the repository
+git clone https://github.com/yourusername/aetheris.git
 
-# OR using Yarn
-yarn start
+# Install dependencies
+npm install
+
+# Build the project
+npx react-native run-android
+
 ```
 
-## Step 2: Start your Application
+---
 
-Let Metro Bundler run in its _own_ terminal. Open a _new_ terminal from the _root_ of your React Native project. Run the following command to start your _Android_ or _iOS_ app:
+## 🛡️ License
 
-### For Android
+Distributed under the MIT License. See `LICENSE` for more information.
 
-```bash
-# using npm
-npm run android
+---
 
-# OR using Yarn
-yarn android
-```
-
-### For iOS
-
-```bash
-# using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up _correctly_, you should see your new app running in your _Android Emulator_ or _iOS Simulator_ shortly provided you have set up your emulator/simulator correctly.
-
-This is one way to run your app — you can also run it directly from within Android Studio and Xcode respectively.
-
-## Step 3: Modifying your App
-
-Now that you have successfully run the app, let's modify it.
-
-1. Open `App.tsx` in your text editor of choice and edit some lines.
-2. For **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Developer Menu** (<kbd>Ctrl</kbd> + <kbd>M</kbd> (on Window and Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (on macOS)) to see your changes!
-
-   For **iOS**: Hit <kbd>Cmd ⌘</kbd> + <kbd>R</kbd> in your iOS Simulator to reload the app and see your changes!
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [Introduction to React Native](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you can't get this to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+**Built with 💻 by cipher-d-dev.**
+*Exploring the boundaries of resilient communication.*
