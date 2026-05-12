@@ -32,7 +32,7 @@ export async function initIdentity(): Promise<NodeIdentity> {
   const publicKeyBase58 = toBase58(Buffer.from(keypair.pk, 'base64'));
   const privateKeyBase64 = keypair.sk; // Already base64 from sodium
 
-  // 3. Store in Android Keystore via react-native-keychain
+  // 3. Store in Android Keystore via react-native-keychain with PIN/Passcode fallback
   await Keychain.setGenericPassword(
     publicKeyBase58, // username = public key (non-secret)
     JSON.stringify({
@@ -42,7 +42,7 @@ export async function initIdentity(): Promise<NodeIdentity> {
     {
       service: KEYCHAIN_SERVICE,
       accessible: Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-      storage: Keychain.STORAGE_TYPE.RSA, // Uses Android Keystore hardware
+      storage: Keychain.STORAGE_TYPE.AES_GCM, // Use AES encryption with device key
     },
   );
 

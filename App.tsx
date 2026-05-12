@@ -1,21 +1,24 @@
 import React, { useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { initDatabase } from './src/db/database';
-import IdentityScreen from './src/screens/IdentityScreen';
-
-const Stack = createNativeStackNavigator();
+import AppNavigator from './src/navigation/AppNavigator';
+import { useThemeStore } from './src/theme';
+import { StatusBar } from 'react-native';
 
 export default function App() {
+  const { isDark, theme: t } = useThemeStore();
+
   useEffect(() => {
     initDatabase();
   }, []);
 
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Identity" component={IdentityScreen} />
-      </Stack.Navigator>
+      <StatusBar
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={t.bg}
+      />
+      <AppNavigator />
     </NavigationContainer>
   );
 }
