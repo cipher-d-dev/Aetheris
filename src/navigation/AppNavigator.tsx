@@ -1,6 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { StyleSheet, View, Text } from 'react-native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { useThemeStore, Font } from '../theme';
 
@@ -8,11 +9,36 @@ import IdentityScreen from '../screens/IdentityScreen';
 import NearbyScreen from '../screens/NearbyScreen';
 import MessagesScreen from '../screens/MessagesScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import ChatScreen from '../screens/ChatScreen';
+import NewChatScreen from '../screens/NewChatScreen';
+
+// ─── Stack for the Messages tab ───────────────────────────────────────────────
+// MessagesScreen (conversation list) → NewChatScreen → ChatScreen
+
+const MessagesStack = createNativeStackNavigator();
+
+function MessagesStackNavigator() {
+    const { theme: t } = useThemeStore();
+    return (
+        <MessagesStack.Navigator
+            screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: t.bg },
+                animation: 'slide_from_right',
+            }}>
+            <MessagesStack.Screen name="ConversationList" component={MessagesScreen} />
+            <MessagesStack.Screen name="NewChat" component={NewChatScreen} />
+            <MessagesStack.Screen name="Chat" component={ChatScreen} />
+        </MessagesStack.Navigator>
+    );
+}
+
+// ─── Bottom Tabs ──────────────────────────────────────────────────────────────
 
 const Tab = createBottomTabNavigator();
 
 export default function AppNavigator() {
-    const { theme: t, isDark } = useThemeStore();
+    const { theme: t } = useThemeStore();
 
     return (
         <Tab.Navigator
@@ -41,7 +67,11 @@ export default function AppNavigator() {
                     };
                     const iconName = iconMap[route.name] ?? 'circle';
                     return (
-                        <View style={[styles.iconWrap, focused && { backgroundColor: t.accentSoft }]}>
+                        <View
+                            style={[
+                                styles.iconWrap,
+                                focused && { backgroundColor: t.accentSoft },
+                            ]}>
                             <Icon name={iconName} size={20} color={color} />
                         </View>
                     );
@@ -49,7 +79,16 @@ export default function AppNavigator() {
             })}>
             <Tab.Screen name="Identity" component={IdentityScreen} />
             <Tab.Screen name="Nearby" component={NearbyScreen} />
-            <Tab.Screen name="Messages" component={MessagesScreen} />
+            <Tab.Screen
+                name="Messages"
+                component={MessagesStackNavigator}
+                listeners={({ navigation }) => ({
+                    tabPress: () => {
+                        // Always go back to conversation list when tapping the tab
+                        navigation.navigate('Messages', { screen: 'ConversationList' });
+                    },
+                })}
+            />
             <Tab.Screen name="Settings" component={SettingsScreen} />
         </Tab.Navigator>
     );

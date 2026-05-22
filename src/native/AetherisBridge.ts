@@ -20,13 +20,25 @@ export interface NativePeer {
   lastSeen: number;
 }
 
-export const AetherisBridge = {
-  // ─── Discovery ─────────────────────────────────────────────────────────────
+export type ConnectionState =
+  | 'connecting'
+  | 'connected'
+  | 'disconnected'
+  | 'failed';
 
-  /**
-   * Start BLE advertising + scanning.
-   * @param nodeId Your full Base58 public key
-   */
+export interface ConnectionStateEvent {
+  peerId: string;
+  state: ConnectionState;
+}
+
+export interface MessageReceivedEvent {
+  peerId: string;
+  data: string; // Base64 encoded bytes
+}
+
+export const AetherisBridge = {
+  // ─── Discovery (BLE) ───────────────────────────────────────────────────────
+
   startDiscovery: (nodeId: string): Promise<void> =>
     AetherisNativeModule.startDiscovery(nodeId),
 
@@ -35,30 +47,52 @@ export const AetherisBridge = {
   isBluetoothEnabled: (): Promise<boolean> =>
     AetherisNativeModule.isBluetoothEnabled(),
 
-  // ─── Events ────────────────────────────────────────────────────────────────
+  // ─── Connection (Wi-Fi Direct) ─────────────────────────────────────────────
 
-  /** Fires when a new Aetheris peer is detected for the first time */
+  /**
+   * Connect to a peer over Wi-Fi Direct.
+   * @param deviceAddress The Wi-Fi Direct MAC address of the peer
+   * @param peerId        The Aetheris node ID of the peer (from BLE)
+   */
+  connectToPeer: (deviceAddress: string, peerId: string): Promise<void> =>
+    AetherisNativeModule.connectToPeer(deviceAddress, peerId),
+
+  disconnectFromPeer: (peerId: string): Promise<void> =>
+    AetherisNativeModule.disconnectFromPeer(peerId),
+
+  /**
+   * Send raw bytes to a connected peer.
+   * @param peerId     Aetheris node ID
+   * @param base64Data Base64-encoded bytes to send
+   */
+  sendRawBytes: (peerId: string, base64Data: string): Promise<void> =>
+    AetherisNativeModule.sendRawBytes(peerId, base64Data),
+
+  getConnectedPeers: (): Promise<string[]> =>
+    AetherisNativeModule.getConnectedPeers(),
+
+  isConnectedTo: (peerId: string): Promise<boolean> =>
+    AetherisNativeModule.isConnectedTo(peerId),
+
+  // ─── BLE Events ────────────────────────────────────────────────────────────
+
   onPeerDiscovered: (cb: (peer: NativePeer) => void): EmitterSubscription =>
     emitter.addListener('AetherisPeerDiscovered', cb),
 
-  /** Fires when a known peer's RSSI updates */
   onPeerUpdated: (cb: (peer: NativePeer) => void): EmitterSubscription =>
     emitter.addListener('AetherisPeerUpdated', cb),
 
-  /** Fires when a peer hasn't been seen for 10 seconds */
   onPeerLost: (cb: (data: {id: string}) => void): EmitterSubscription =>
     emitter.addListener('AetherisPeerLost', cb),
 
-  /** Fires when a raw message arrives (Day 3+) */
+  // ─── Wi-Fi Direct Events ───────────────────────────────────────────────────
+
+  onConnectionStateChanged: (
+    cb: (event: ConnectionStateEvent) => void,
+  ): EmitterSubscription =>
+    emitter.addListener('AetherisConnectionStateChanged', cb),
+
   onMessageReceived: (
-    cb: (payload: {peerId: string; data: string}) => void,
+    cb: (event: MessageReceivedEvent) => void,
   ): EmitterSubscription => emitter.addListener('AetherisMessageReceived', cb),
-
-  // ─── Day 3 stubs ───────────────────────────────────────────────────────────
-
-  connectToPeer: (peerId: string): Promise<void> =>
-    AetherisNativeModule.connectToPeer(peerId),
-
-  sendRawBytes: (peerId: string, base64Data: string): Promise<void> =>
-    AetherisNativeModule.sendRawBytes(peerId, base64Data),
 };
