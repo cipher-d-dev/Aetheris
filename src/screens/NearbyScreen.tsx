@@ -13,7 +13,11 @@ import { check, request, PERMISSIONS, RESULTS } from 'react-native-permissions';
 import Icon from 'react-native-vector-icons/Feather';
 import { useThemeStore, Font } from '../theme';
 import { useIdentityStore } from '../store/identityStore';
-import { AetherisBridge, NativePeer } from '../native/AetherisBridge';
+import {
+    AetherisBridge,
+    NativePeer,
+    ConnectionState,
+} from '../native/AetherisBridge';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,7 +25,10 @@ interface Peer {
     id: string;
     rssi: number;
     lastSeen: number;
+    connectionState: ConnectionState | 'idle';
 }
+
+type ScanState = 'idle' | 'requesting' | 'scanning' | 'denied' | 'bt_off';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,7 +46,27 @@ function timeAgo(ms: number): string {
     return `${Math.floor(seconds / 60)}m ago`;
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+function connectionStateLabel(state: ConnectionState | 'idle'): string {
+    switch (state) {
+        case 'idle': return '';
+        case 'connecting': return 'Connecting...';
+        case 'connected': return 'Connected';
+        case 'disconnected': return 'Disconnected';
+        case 'failed': return 'Failed';
+    }
+}
+
+function connectionStateColor(state: ConnectionState | 'idle', accent: string): string {
+    switch (state) {
+        case 'connected': return '#22C55E';
+        case 'connecting': return '#F59E0B';
+        case 'failed': return '#EF4444';
+        case 'disconnected': return '#6B7280';
+        default: return accent;
+    }
+}
+
+// ─── Signal Bars ──────────────────────────────────────────────────────────────
 
 function SignalBars({ bars, color }: { bars: number; color: string }) {
     return (
@@ -49,7 +76,10 @@ function SignalBars({ bars, color }: { bars: number; color: string }) {
                     key={i}
                     style={[
                         signalStyles.bar,
-                        { height: 4 + i * 3, backgroundColor: i <= bars ? color : '#2A2F3D' },
+                        {
+                            height: 4 + i * 3,
+                            backgroundColor: i <= bars ? color : '#3A3F4D',
+                        },
                     ]}
                 />
             ))}
@@ -61,6 +91,8 @@ const signalStyles = StyleSheet.create({
     row: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
     bar: { width: 4, borderRadius: 2 },
 });
+
+// ─── Pulsing Ring ─────────────────────────────────────────────────────────────
 
 function PulsingRing({ color }: { color: string }) {
     const scale = useRef(new Animated.Value(1)).current;
@@ -76,23 +108,11 @@ function PulsingRing({ color }: { color: string }) {
                         easing: Easing.out(Easing.ease),
                         useNativeDriver: true,
                     }),
-                    Animated.timing(scale, {
-                        toValue: 1,
-                        duration: 0,
-                        useNativeDriver: true,
-                    }),
+                    Animated.timing(scale, { toValue: 1, duration: 0, useNativeDriver: true }),
                 ]),
                 Animated.sequence([
-                    Animated.timing(opacity, {
-                        toValue: 0,
-                        duration: 1400,
-                        useNativeDriver: true,
-                    }),
-                    Animated.timing(opacity, {
-                        toValue: 0.6,
-                        duration: 0,
-                        useNativeDriver: true,
-                    }),
+                    Animated.timing(opacity, { toValue: 0, duration: 1400, useNativeDriver: true }),
+                    Animated.timing(opacity, { toValue: 0.6, duration: 0, useNativeDriver: true }),
                 ]),
             ]),
         );
@@ -105,11 +125,7 @@ function PulsingRing({ color }: { color: string }) {
             <Animated.View
                 style={[
                     pulseStyles.ring,
-                    {
-                        borderColor: color,
-                        transform: [{ scale }],
-                        opacity,
-                    },
+                    { borderColor: color, transform: [{ scale }], opacity },
                 ]}
             />
             <View style={[pulseStyles.dot, { backgroundColor: color }]} />
@@ -129,9 +145,22 @@ const pulseStyles = StyleSheet.create({
     dot: { width: 8, height: 8, borderRadius: 4 },
 });
 
-function PeerCard({ peer }: { peer: Peer }) {
+// ─── Peer Card ────────────────────────────────────────────────────────────────
+
+function PeerCard({
+    peer,
+    onConnect,
+    onDisconnect,
+}: {
+    peer: Peer;
+    onConnect: (id: string) => void;
+    onDisconnect: (id: string) => void;
+}) {
     const { theme: t } = useThemeStore();
     const signal = rssiToSignal(peer.rssi);
+    const connColor = connectionStateColor(peer.connectionState, t.accent);
+    const isConnected = peer.connectionState === 'connected';
+    const isConnecting = peer.connectionState === 'connecting';
 
     return (
         <View style={[peerStyles.card, { backgroundColor: t.surface, borderColor: t.border }]}>
@@ -144,16 +173,46 @@ function PeerCard({ peer }: { peer: Peer }) {
                 <Text style={[peerStyles.lastSeen, { color: t.textMuted }]}>
                     {timeAgo(peer.lastSeen)}
                 </Text>
+                {peer.connectionState !== 'idle' && (
+                    <Text style={[peerStyles.connState, { color: connColor }]}>
+                        {connectionStateLabel(peer.connectionState)}
+                    </Text>
+                )}
             </View>
 
-            <View style={peerStyles.signalWrap}>
+            <View style={peerStyles.right}>
                 <SignalBars bars={signal.bars} color={signal.color} />
-                <Text style={[peerStyles.signalLabel, { color: signal.color }]}>
-                    {signal.label}
-                </Text>
                 <Text style={[peerStyles.rssiText, { color: t.textMuted }]}>
                     {peer.rssi} dBm
                 </Text>
+
+                {isConnected ? (
+                    <TouchableOpacity
+                        style={[peerStyles.actionButton, { borderColor: '#EF4444' }]}
+                        onPress={() => onDisconnect(peer.id)}
+                        activeOpacity={0.7}>
+                        <Text style={[peerStyles.actionText, { color: '#EF4444' }]}>
+                            Disconnect
+                        </Text>
+                    </TouchableOpacity>
+                ) : (
+                    <TouchableOpacity
+                        style={[
+                            peerStyles.actionButton,
+                            { borderColor: isConnecting ? t.textMuted : t.accentBorder },
+                        ]}
+                        onPress={() => !isConnecting && onConnect(peer.id)}
+                        activeOpacity={0.7}
+                        disabled={isConnecting}>
+                        <Text
+                            style={[
+                                peerStyles.actionText,
+                                { color: isConnecting ? t.textMuted : t.accent },
+                            ]}>
+                            {isConnecting ? '...' : 'Connect'}
+                        </Text>
+                    </TouchableOpacity>
+                )}
             </View>
         </View>
     );
@@ -178,22 +237,28 @@ const peerStyles = StyleSheet.create({
         borderWidth: 1,
     },
     info: { flex: 1 },
-    peerId: { fontSize: 15, fontFamily: Font.semiBold, letterSpacing: 1 },
+    peerId: { fontSize: 14, fontFamily: Font.semiBold, letterSpacing: 1 },
     lastSeen: { fontSize: 11, fontFamily: Font.regular, marginTop: 2 },
-    signalWrap: { alignItems: 'center', gap: 3 },
-    signalLabel: { fontSize: 10, fontFamily: Font.semiBold },
+    connState: { fontSize: 11, fontFamily: Font.medium, marginTop: 2 },
+    right: { alignItems: 'center', gap: 4 },
     rssiText: { fontSize: 9, fontFamily: Font.regular },
+    actionButton: {
+        borderWidth: 1,
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        marginTop: 4,
+    },
+    actionText: { fontSize: 11, fontFamily: Font.semiBold },
 });
 
-// ─── Permission helpers ───────────────────────────────────────────────────────
+// ─── Permission Helper ────────────────────────────────────────────────────────
 
 async function requestBlePermissions(): Promise<boolean> {
     if (Platform.OS !== 'android') return true;
+    const version = Platform.Version as number;
 
-    const androidVersion = Platform.Version as number;
-
-    if (androidVersion >= 31) {
-        // Android 12+: new BLE permissions
+    if (version >= 31) {
         const results = await Promise.all([
             request(PERMISSIONS.ANDROID.BLUETOOTH_SCAN),
             request(PERMISSIONS.ANDROID.BLUETOOTH_ADVERTISE),
@@ -201,15 +266,12 @@ async function requestBlePermissions(): Promise<boolean> {
         ]);
         return results.every(r => r === RESULTS.GRANTED);
     } else {
-        // Android < 12: location permission required for BLE
         const result = await request(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION);
         return result === RESULTS.GRANTED;
     }
 }
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
-
-type ScanState = 'idle' | 'requesting' | 'scanning' | 'denied' | 'bt_off';
 
 export default function NearbyScreen() {
     const { theme: t } = useThemeStore();
@@ -219,7 +281,6 @@ export default function NearbyScreen() {
     const [scanState, setScanState] = useState<ScanState>('idle');
     const peersRef = useRef<Peer[]>([]);
 
-    // Keep ref in sync for use inside event callbacks
     const updatePeers = useCallback((updater: (prev: Peer[]) => Peer[]) => {
         const next = updater(peersRef.current);
         peersRef.current = next;
@@ -227,32 +288,41 @@ export default function NearbyScreen() {
     }, []);
 
     useEffect(() => {
-        // Set up BLE event listeners
-        const subDiscovered = AetherisBridge.onPeerDiscovered(peer => {
+        const subDiscovered = AetherisBridge.onPeerDiscovered((peer: NativePeer) => {
             updatePeers(prev => {
                 if (prev.find(p => p.id === peer.id)) return prev;
-                return [...prev, { id: peer.id, rssi: peer.rssi, lastSeen: peer.lastSeen }];
+                return [
+                    ...prev,
+                    { id: peer.id, rssi: peer.rssi, lastSeen: peer.lastSeen, connectionState: 'idle' },
+                ];
             });
         });
 
-        const subUpdated = AetherisBridge.onPeerUpdated(peer => {
+        const subUpdated = AetherisBridge.onPeerUpdated((peer: NativePeer) => {
             updatePeers(prev =>
                 prev.map(p =>
-                    p.id === peer.id
-                        ? { ...p, rssi: peer.rssi, lastSeen: peer.lastSeen }
-                        : p,
+                    p.id === peer.id ? { ...p, rssi: peer.rssi, lastSeen: peer.lastSeen } : p,
                 ),
             );
         });
 
-        const subLost = AetherisBridge.onPeerLost(({ id }) => {
+        const subLost = AetherisBridge.onPeerLost(({ id }: { id: string }) => {
             updatePeers(prev => prev.filter(p => p.id !== id));
+        });
+
+        const subConnection = AetherisBridge.onConnectionStateChanged(event => {
+            updatePeers(prev =>
+                prev.map(p =>
+                    p.id === event.peerId ? { ...p, connectionState: event.state } : p,
+                ),
+            );
         });
 
         return () => {
             subDiscovered.remove();
             subUpdated.remove();
             subLost.remove();
+            subConnection.remove();
         };
     }, []);
 
@@ -275,7 +345,7 @@ export default function NearbyScreen() {
         try {
             await AetherisBridge.startDiscovery(identity.publicKeyBase58);
             setScanState('scanning');
-        } catch (e: any) {
+        } catch (e) {
             setScanState('idle');
         }
     };
@@ -283,11 +353,30 @@ export default function NearbyScreen() {
     const stopScan = async () => {
         await AetherisBridge.stopDiscovery();
         setScanState('idle');
-        setPeers([]);
         peersRef.current = [];
+        setPeers([]);
     };
 
-    // ─── Render helpers ─────────────────────────────────────────────────────
+    /**
+     * NOTE: connectToPeer requires the Wi-Fi Direct MAC address, which is
+     * separate from the Aetheris node ID. In a full implementation this
+     * comes from a Wi-Fi Direct peer discovery scan. For now this is
+     * wired up and ready — the MAC address resolution is a Day 5 enhancement
+     * where we embed the WFD MAC in the BLE advertisement payload.
+     *
+     * For testing Day 3: pass the device's Wi-Fi Direct MAC manually.
+     */
+    const handleConnect = async (peerId: string) => {
+        // Placeholder — in production the deviceAddress comes from BLE payload
+        // For now connect triggers the Wi-Fi Direct flow from native side
+        await AetherisBridge.connectToPeer('', peerId);
+    };
+
+    const handleDisconnect = async (peerId: string) => {
+        await AetherisBridge.disconnectFromPeer(peerId);
+    };
+
+    // ─── Render ───────────────────────────────────────────────────────────────
 
     const renderHeader = () => (
         <View style={styles.headerWrap}>
@@ -300,13 +389,9 @@ export default function NearbyScreen() {
                             : 'Discover peers around you'}
                     </Text>
                 </View>
-
-                {scanState === 'scanning' ? (
-                    <PulsingRing color={t.accent} />
-                ) : null}
+                {scanState === 'scanning' && <PulsingRing color={t.accent} />}
             </View>
 
-            {/* Scan button */}
             {scanState !== 'scanning' ? (
                 <TouchableOpacity
                     style={[styles.scanButton, { backgroundColor: t.accent }]}
@@ -328,27 +413,26 @@ export default function NearbyScreen() {
                 </TouchableOpacity>
             )}
 
-            {/* Status messages */}
             {scanState === 'denied' && (
-                <View style={[styles.statusBanner, { backgroundColor: t.errorBg, borderColor: t.errorBorder }]}>
+                <View style={[styles.banner, { backgroundColor: t.errorBg, borderColor: t.errorBorder }]}>
                     <Icon name="alert-triangle" size={14} color={t.errorText} />
-                    <Text style={[styles.statusText, { color: t.errorText }]}>
-                        Bluetooth permission denied. Enable it in Settings.
+                    <Text style={[styles.bannerText, { color: t.errorText }]}>
+                        Bluetooth permission denied. Enable it in device Settings.
                     </Text>
                 </View>
             )}
 
             {scanState === 'bt_off' && (
-                <View style={[styles.statusBanner, { backgroundColor: t.errorBg, borderColor: t.errorBorder }]}>
+                <View style={[styles.banner, { backgroundColor: t.errorBg, borderColor: t.errorBorder }]}>
                     <Icon name="bluetooth-off" size={14} color={t.errorText} />
-                    <Text style={[styles.statusText, { color: t.errorText }]}>
+                    <Text style={[styles.bannerText, { color: t.errorText }]}>
                         Bluetooth is off. Please enable it.
                     </Text>
                 </View>
             )}
 
             {peers.length > 0 && (
-                <Text style={[styles.listLabel, { color: t.textMuted }]}>PEERS</Text>
+                <Text style={[styles.sectionLabel, { color: t.textMuted }]}>PEERS</Text>
             )}
         </View>
     );
@@ -374,7 +458,13 @@ export default function NearbyScreen() {
             <FlatList
                 data={peers}
                 keyExtractor={item => item.id}
-                renderItem={({ item }) => <PeerCard peer={item} />}
+                renderItem={({ item }) => (
+                    <PeerCard
+                        peer={item}
+                        onConnect={handleConnect}
+                        onDisconnect={handleDisconnect}
+                    />
+                )}
                 ListHeaderComponent={renderHeader}
                 ListEmptyComponent={renderEmpty}
                 contentContainerStyle={styles.listContent}
@@ -388,7 +478,12 @@ export default function NearbyScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    listContent: { paddingHorizontal: 24, paddingTop: 56, paddingBottom: 32, flexGrow: 1 },
+    listContent: {
+        paddingHorizontal: 24,
+        paddingTop: 56,
+        paddingBottom: 32,
+        flexGrow: 1,
+    },
 
     headerWrap: { marginBottom: 8 },
     headerTop: {
@@ -397,7 +492,12 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         marginBottom: 20,
     },
-    headerTitle: { fontSize: 28, fontFamily: Font.bold, letterSpacing: -0.5, marginBottom: 4 },
+    headerTitle: {
+        fontSize: 28,
+        fontFamily: Font.bold,
+        letterSpacing: -0.5,
+        marginBottom: 4,
+    },
     headerSub: { fontSize: 14, fontFamily: Font.regular },
 
     scanButton: {
@@ -409,11 +509,8 @@ const styles = StyleSheet.create({
         paddingVertical: 14,
         marginBottom: 16,
     },
-    scanButtonText: {
-        color: '#FFFFFF',
-        fontSize: 15,
-        fontFamily: Font.semiBold,
-    },
+    scanButtonText: { color: '#FFFFFF', fontSize: 15, fontFamily: Font.semiBold },
+
     stopButton: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -426,7 +523,7 @@ const styles = StyleSheet.create({
     },
     stopButtonText: { fontSize: 15, fontFamily: Font.semiBold },
 
-    statusBanner: {
+    banner: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
@@ -435,9 +532,9 @@ const styles = StyleSheet.create({
         padding: 12,
         marginBottom: 16,
     },
-    statusText: { fontSize: 13, fontFamily: Font.regular, flex: 1 },
+    bannerText: { fontSize: 13, fontFamily: Font.regular, flex: 1 },
 
-    listLabel: {
+    sectionLabel: {
         fontSize: 10,
         fontFamily: Font.bold,
         letterSpacing: 2,

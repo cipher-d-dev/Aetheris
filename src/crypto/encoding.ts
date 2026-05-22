@@ -27,3 +27,32 @@ export function formatShortId(base58Id: string): string {
   const trimmed = base58Id.slice(0, 8).toUpperCase();
   return `${trimmed.slice(0, 4)}-${trimmed.slice(4, 8)}`;
 }
+
+/**
+ * Convert Base58 encoded public key to Base64 for crypto operations.
+ * This is the reverse of toBase58.
+ */
+export function base58ToBase64(base58: string): string {
+  let num = BigInt(0);
+  const base = BigInt(58);
+
+  for (const char of base58) {
+    const digit = BASE58_ALPHABET.indexOf(char);
+    if (digit < 0) throw new Error(`Invalid Base58 char: ${char}`);
+    num = num * base + BigInt(digit);
+  }
+
+  const bytes: number[] = [];
+  while (num > 0n) {
+    bytes.unshift(Number(num % 256n));
+    num = num / 256n;
+  }
+
+  // Re-add leading zeros
+  for (const char of base58) {
+    if (char !== '1') break;
+    bytes.unshift(0);
+  }
+
+  return Buffer.from(bytes).toString('base64');
+}

@@ -3,6 +3,7 @@ package com.aetheris
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.module.annotations.ReactModule
+import android.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.Timer
 import java.util.TimerTask
@@ -13,17 +14,37 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
 
     companion object {
         const val NAME = "AetherisNativeModule"
-
-        // How long (ms) before we consider a peer "lost" if not seen again
         private const val PEER_TIMEOUT_MS = 10_000L
         private const val PEER_CHECK_INTERVAL_MS = 3_000L
     }
 
     private val bleManager = BLEManager(reactContext)
 
-    // Map of peerId -> last seen timestamp (ms)
+    private val wifiDirectManager = WifiDirectManager(
+        context = reactContext,
+        onMessageReceived = { peerId, data ->
+            reactContext.runOnJSQueueThread {
+                val params = Arguments.createMap().apply {
+                    putString("peerId", peerId)
+                    putString("data", Base64.encodeToString(data, Base64.NO_WRAP))
+                }
+                sendEvent("AetherisMessageReceived", params)
+            }
+        },
+        onConnectionStateChanged = { peerId, state ->
+            reactContext.runOnJSQueueThread {
+                val params = Arguments.createMap().apply {
+                    putString("peerId", peerId)
+                    putString("state", state)
+                }
+                sendEvent("AetherisConnectionStateChanged", params)
+            }
+        }
+    )
+
     private val seenPeers = ConcurrentHashMap<String, Long>()
     private var peerTimeoutTimer: Timer? = null
+    private var currentNodeId: String = ""
 
     override fun getName(): String = NAME
 
@@ -40,7 +61,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
     @ReactMethod
     fun startDiscovery(nodeId: String, promise: Promise) {
         if (bleManager.isAdvertising || bleManager.isScanning) {
-            promise.resolve("Already discoverying")
+            promise.resolve("Already discovering")
             return
         }
         try {
@@ -49,18 +70,17 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
                 return
             }
 
-            // Start advertising this node
+            currentNodeId = nodeId
+            wifiDirectManager.start(nodeId)
             bleManager.startAdvertising(nodeId)
 
-            // Start scanning for other nodes
             bleManager.startScanning { peerId, rssi ->
-                reactContext.runOnJSQueueThread { // <--- Ensure we are on the right thread
+                reactContext.runOnJSQueueThread {
                     val now = System.currentTimeMillis()
                     val isNew = !seenPeers.containsKey(peerId)
                     seenPeers[peerId] = now
 
                     if (isNew) {
-                        // New peer — emit discovery event
                         val params = Arguments.createMap().apply {
                             putString("id", peerId)
                             putInt("rssi", rssi)
@@ -68,7 +88,6 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
                         }
                         sendEvent("AetherisPeerDiscovered", params)
                     } else {
-                        // Known peer — emit RSSI update
                         val params = Arguments.createMap().apply {
                             putString("id", peerId)
                             putInt("rssi", rssi)
@@ -79,9 +98,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
                 }
             }
 
-            // Start the peer timeout checker
             startPeerTimeoutChecker()
-
             promise.resolve(null)
         } catch (e: Exception) {
             promise.reject("DISCOVERY_ERROR", e.message ?: "Unknown error")
@@ -93,6 +110,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
         try {
             bleManager.stopAdvertising()
             bleManager.stopScanning()
+            wifiDirectManager.stop()
             stopPeerTimeoutChecker()
             seenPeers.clear()
             promise.resolve(null)
@@ -106,12 +124,71 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
         promise.resolve(bleManager.isBluetoothEnabled())
     }
 
-    // ─── Peer timeout checker ─────────────────────────────────────────────────
+    // ─── Wi-Fi Direct ─────────────────────────────────────────────────────────
 
     /**
-     * Periodically checks if any peer hasn't been seen for PEER_TIMEOUT_MS.
-     * Emits AetherisPeerLost for any timed-out peer.
+     * Initiate a Wi-Fi Direct connection to a peer.
+     *
+     * @param deviceAddress The Wi-Fi Direct MAC address of the peer device.
+     *                      On Android this comes from WifiP2pDevice.deviceAddress.
+     *                      The JS side must pass this after resolving it from
+     *                      Wi-Fi Direct peer discovery (separate from BLE).
+     * @param peerId        The Aetheris node ID of the peer (from BLE discovery).
      */
+    @ReactMethod
+    fun connectToPeer(deviceAddress: String, peerId: String, promise: Promise) {
+        try {
+            wifiDirectManager.connectToDevice(deviceAddress, peerId)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("CONNECT_ERROR", e.message ?: "Unknown error")
+        }
+    }
+
+    @ReactMethod
+    fun disconnectFromPeer(peerId: String, promise: Promise) {
+        try {
+            wifiDirectManager.disconnect(peerId)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("DISCONNECT_ERROR", e.message ?: "Unknown error")
+        }
+    }
+
+    /**
+     * Send raw bytes to a connected peer.
+     * Data must be Base64-encoded on the JS side.
+     */
+    @ReactMethod
+    fun sendRawBytes(peerId: String, base64Data: String, promise: Promise) {
+        try {
+            val bytes = Base64.decode(base64Data, Base64.NO_WRAP)
+            val success = wifiDirectManager.sendBytes(peerId, bytes)
+            if (success) {
+                promise.resolve(null)
+            } else {
+                promise.reject("SEND_FAILED", "No active connection to peer $peerId")
+            }
+        } catch (e: Exception) {
+            promise.reject("SEND_ERROR", e.message ?: "Unknown error")
+        }
+    }
+
+    @ReactMethod
+    fun getConnectedPeers(promise: Promise) {
+        val peers = wifiDirectManager.getConnectedPeerIds()
+        val arr = Arguments.createArray()
+        peers.forEach { arr.pushString(it) }
+        promise.resolve(arr)
+    }
+
+    @ReactMethod
+    fun isConnectedTo(peerId: String, promise: Promise) {
+        promise.resolve(wifiDirectManager.isConnectedTo(peerId))
+    }
+
+    // ─── Peer timeout checker ─────────────────────────────────────────────────
+
     private fun startPeerTimeoutChecker() {
         stopPeerTimeoutChecker()
         peerTimeoutTimer = Timer().apply {
@@ -123,7 +200,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
                         .map { it.key }
 
                     lostPeers.forEach { peerId ->
-                        reactContext.runOnJSQueueThread { // <--- Ensure we are on the right thread
+                        reactContext.runOnJSQueueThread {
                             seenPeers.remove(peerId)
                             val params = Arguments.createMap().apply {
                                 putString("id", peerId)
@@ -141,18 +218,6 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
         peerTimeoutTimer = null
     }
 
-    // ─── Stubs for Day 3 (Wi-Fi Direct) ──────────────────────────────────────
-
-    @ReactMethod
-    fun connectToPeer(peerId: String, promise: Promise) {
-        promise.reject("NOT_IMPLEMENTED", "Wi-Fi Direct connection coming in Day 3")
-    }
-
-    @ReactMethod
-    fun sendRawBytes(peerId: String, base64Data: String, promise: Promise) {
-        promise.reject("NOT_IMPLEMENTED", "Data transfer coming in Day 3")
-    }
-
     // ─── Required for RN event emitter ───────────────────────────────────────
 
     @ReactMethod
@@ -161,12 +226,13 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
     @ReactMethod
     fun removeListeners(count: Int) {}
 
-    // ─── Cleanup on module destroy ────────────────────────────────────────────
+    // ─── Cleanup ──────────────────────────────────────────────────────────────
 
     override fun invalidate() {
         super.invalidate()
         bleManager.stopAdvertising()
         bleManager.stopScanning()
+        wifiDirectManager.stop()
         stopPeerTimeoutChecker()
     }
 }
