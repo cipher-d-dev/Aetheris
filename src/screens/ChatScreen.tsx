@@ -15,6 +15,8 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useThemeStore, Font } from '../theme';
 import { useIdentityStore } from '../store/identityStore';
 import { useMessagesStore, Message } from '../store/messagesStore';
+import { useMeshService } from '../store/meshService';
+import { base58ToBase64 } from '../crypto/encoding';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,11 +145,13 @@ export default function ChatScreen() {
     const { theme: t } = useThemeStore();
     const { identity } = useIdentityStore();
     const { messages, loadMessages, sendMessage } = useMessagesStore();
+    const { sendMessage: meshSendMessage } = useMeshService();
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
 
     const peerId: string = route.params?.peerId ?? '';
     const peerAlias: string = route.params?.peerAlias ?? peerId;
+    const peerPublicKeyBase64: string = route.params?.peerPublicKeyBase64 ?? '';
 
     const [inputText, setInputText] = useState('');
     const [sending, setSending] = useState(false);
@@ -169,7 +173,7 @@ export default function ChatScreen() {
         }
     }, [conversation.length]);
 
-    const handleSend = () => {
+    const handleSend = async () => {
         if (!inputText.trim() || !identity || sending) return;
 
         const text = inputText.trim();
@@ -177,11 +181,28 @@ export default function ChatScreen() {
         setSending(true);
 
         try {
-            sendMessage({
+            // Add to local store optimistically
+            const localMsg = sendMessage({
                 myId: identity.publicKeyBase58,
                 peerId,
                 text,
             });
+
+            // Convert peer ID from Base58 to Base64 for encryption
+            try {
+                const peerPublicKeyBase64 = base58ToBase64(peerId);
+                
+                // Send via mesh network
+                await meshSendMessage({
+                    recipientId: peerId,
+                    recipientPublicKeyBase64: peerPublicKeyBase64,
+                    text,
+                });
+            } catch (e) {
+                console.warn('[ChatScreen] Peer ID conversion failed:', e);
+            }
+        } catch (e) {
+            console.error('[ChatScreen] Send failed:', e);
         } finally {
             setSending(false);
         }

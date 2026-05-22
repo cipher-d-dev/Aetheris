@@ -47,15 +47,36 @@ Aetheris isn't just a chat app; it’s an exploration of **Sovereign Connectivit
 
 ---
 
-## 🚧 Project Status: Day 1+ (In Development)
+## 🚧 Project Status: Day 5+ (Core Features Complete)
 
-Currently focused on the Android implementation:
+### Completed ✅
 
-* [x] **Identity Generation:** Ed25519 keypair generation and Keystore integration.
-* [x] **Local Persistence:** Schema definition and SQLite initialization.
-* [x] **Native Bridge:** Kotlin `MeshNativeModule` for hardware access.
-* [ ] **BLE Discovery:** (In Progress) Implementation of peer scanning and advertising.
-* [ ] **Data Transfer:** (Planned) Wi-Fi Direct socket implementation.
+* [x] **Identity Generation:** Ed25519 keypair generation and Android Keystore integration
+* [x] **End-to-End Encryption:** X25519 + XSalsa20-Poly1305 with ephemeral keypairs for forward secrecy
+* [x] **Message Signing & Verification:** Ed25519 detached signatures with canonical JSON
+* [x] **Local Persistence:** SQLite with Write-Ahead Logging (WAL) for high concurrency
+* [x] **BLE Discovery:** Peer scanning & advertising via manufacturer data (protocol v1)
+* [x] **Wi-Fi Direct:** TCP sockets, Group Owner negotiation, length-prefixed frames
+* [x] **Native Bridge:** Kotlin module orchestrating BLE + Wi-Fi Direct with event emission
+* [x] **Message Relay & Routing:** Spray-and-Wait protocol with TTL tracking and deduplication
+* [x] **Mesh Service:** Unified send/receive/relay pipeline with encryption integration
+
+### In Progress 🔄
+
+* [ ] **Multi-device testing:** Verify messages hop correctly across 3+ devices
+* [ ] **UI refinements:** Display routing paths, connection diagnostics
+* [ ] **Performance optimization:** Battery & bandwidth tuning
+
+### Architecture Highlights
+
+**Spray-and-Wait Routing**: Messages forward to 2 random peers per hop, reducing congestion while ensuring delivery probability.
+
+**Message Flow**:
+1. **Send**: `ChatScreen` → `meshService.sendMessage()` → encrypt (X25519) + sign (Ed25519) → serialize → transmit via Wi-Fi Direct to all peers
+2. **Receive**: `WifiDirectManager` → `meshService.handleMessageReceived()` → verify signature → decrypt if for us OR relay if TTL > 0
+3. **Relay**: Decrement TTL, add hop, forward to 2 random neighbors (exclude sender)
+
+**Deduplication**: Seen-message cache (SQLite) prevents loop-backs; 72-hour TTL ensures cleanup.
 
 ---
 
