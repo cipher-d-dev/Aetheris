@@ -14,32 +14,37 @@ export function insertMessage(msg: {
   senderId: string;
   recipientId: string;
   encryptedPayload: string;
+  serializedMessage?: string;
   nonce: string;
   ephemeralPublicKey: string;
   signature: string;
   isOutbound: boolean;
   ttl: number;
   expiresAt: number;
+  status?: MessageStatus;
   text?: string;
 }): void {
   getDb().execute(
     `INSERT OR IGNORE INTO messages
-      (id, sender_id, recipient_id, encrypted_payload, nonce,
+      (id, sender_id, recipient_id, encrypted_payload, serialized_message, nonce,
        ephemeral_public_key, signature, is_outbound, ttl,
-       hop_count, status, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?)`,
+       hop_count, status, created_at, expires_at, text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
     [
       msg.id,
       msg.senderId,
       msg.recipientId,
       msg.encryptedPayload,
+      msg.serializedMessage || null,
       msg.nonce,
       msg.ephemeralPublicKey,
       msg.signature,
       msg.isOutbound ? 1 : 0,
       msg.ttl,
+      msg.status || 'pending',
       Date.now(),
       msg.expiresAt,
+      msg.text || null,
     ],
   );
 }
@@ -141,6 +146,7 @@ function rowToLocalMessage(row: Record<string, unknown>): LocalMessage {
     senderId: row.sender_id as string,
     recipientId: row.recipient_id as string,
     encryptedPayload: row.encrypted_payload as string,
+    serializedMessage: row.serialized_message as string | undefined,
     nonce: row.nonce as string,
     ephemeralPublicKey: row.ephemeral_public_key as string,
     signature: row.signature as string,
@@ -150,5 +156,6 @@ function rowToLocalMessage(row: Record<string, unknown>): LocalMessage {
     isOutbound: row.is_outbound === 1,
     createdAt: row.created_at as number,
     expiresAt: row.expires_at as number,
+    text: row.text as string | undefined,
   };
 }

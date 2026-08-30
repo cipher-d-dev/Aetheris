@@ -18,6 +18,7 @@ import {
     NativePeer,
     ConnectionState,
 } from '../native/AetherisBridge';
+import { dbUpsertPeer } from '../db/database';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,13 +54,21 @@ function connectionStateLabel(state: ConnectionState | 'idle'): string {
         case 'connected': return 'Connected';
         case 'disconnected': return 'Disconnected';
         case 'failed': return 'Failed';
+        case 'authenticating': return 'Authenticating...';
+        case 'authenticated': return 'Authenticated';
     }
+}
+
+function isLikelyFullPeerId(id: string): boolean {
+    return id.replace(/[-\s]+/g, '').length >= 32;
 }
 
 function connectionStateColor(state: ConnectionState | 'idle', accent: string): string {
     switch (state) {
         case 'connected': return '#22C55E';
+        case 'authenticated': return '#22C55E';
         case 'connecting': return '#F59E0B';
+        case 'authenticating': return '#F59E0B';
         case 'failed': return '#EF4444';
         case 'disconnected': return '#6B7280';
         default: return accent;
@@ -159,7 +168,7 @@ function PeerCard({
     const { theme: t } = useThemeStore();
     const signal = rssiToSignal(peer.rssi);
     const connColor = connectionStateColor(peer.connectionState, t.accent);
-    const isConnected = peer.connectionState === 'connected';
+    const isConnected = peer.connectionState === 'connected' || peer.connectionState === 'authenticated';
     const isConnecting = peer.connectionState === 'connecting';
 
     return (
@@ -289,6 +298,9 @@ export default function NearbyScreen() {
 
     useEffect(() => {
         const subDiscovered = AetherisBridge.onPeerDiscovered((peer: NativePeer) => {
+            if (isLikelyFullPeerId(peer.id)) {
+                dbUpsertPeer(peer.id, peer.rssi);
+            }
             updatePeers(prev => {
                 if (prev.find(p => p.id === peer.id)) return prev;
                 return [
@@ -299,6 +311,9 @@ export default function NearbyScreen() {
         });
 
         const subUpdated = AetherisBridge.onPeerUpdated((peer: NativePeer) => {
+            if (isLikelyFullPeerId(peer.id)) {
+                dbUpsertPeer(peer.id, peer.rssi);
+            }
             updatePeers(prev =>
                 prev.map(p =>
                     p.id === peer.id ? { ...p, rssi: peer.rssi, lastSeen: peer.lastSeen } : p,
@@ -311,10 +326,23 @@ export default function NearbyScreen() {
         });
 
         const subConnection = AetherisBridge.onConnectionStateChanged(event => {
+            if (isLikelyFullPeerId(event.peerId)) {
+                dbUpsertPeer(event.peerId, 0);
+            }
             updatePeers(prev =>
-                prev.map(p =>
-                    p.id === event.peerId ? { ...p, connectionState: event.state } : p,
-                ),
+                prev.find(p => p.id === event.peerId)
+                    ? prev.map(p =>
+                        p.id === event.peerId ? { ...p, connectionState: event.state } : p,
+                    )
+                    : [
+                        ...prev,
+                        {
+                            id: event.peerId,
+                            rssi: 0,
+                            lastSeen: Date.now(),
+                            connectionState: event.state,
+                        },
+                    ],
             );
         });
 

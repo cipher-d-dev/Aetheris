@@ -13,7 +13,7 @@ export type MessageStatus =
   | 'delivered' // Recipient ACK received
   | 'failed'; // Could not be delivered
 
-export type MessageType = 'MSG' | 'ACK';
+export type MessageType = 'MSG' | 'ACK' | 'HANDSHAKE_CHALLENGE' | 'HANDSHAKE_RESPONSE';
 
 export interface EncryptedPayload {
   /** Base64 — ChaCha20-Poly1305 ciphertext */
@@ -83,6 +83,7 @@ export interface LocalMessage {
   senderId: string;
   recipientId: string;
   encryptedPayload: string; // JSON-stringified EncryptedPayload
+  serializedMessage?: string;
   nonce: string;
   ephemeralPublicKey: string;
   signature: string;

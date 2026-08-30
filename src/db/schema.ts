@@ -12,6 +12,7 @@ export const CREATE_TABLES_SQL = `
     sender_id TEXT NOT NULL,
     recipient_id TEXT NOT NULL,
     encrypted_payload TEXT NOT NULL,
+    serialized_message TEXT,
     nonce TEXT NOT NULL,
     ephemeral_public_key TEXT NOT NULL,
     signature TEXT NOT NULL,
@@ -20,7 +21,8 @@ export const CREATE_TABLES_SQL = `
     hop_count INTEGER DEFAULT 0,
     is_outbound INTEGER DEFAULT 0,
     created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
+    text TEXT
   );
 
   CREATE TABLE IF NOT EXISTS peers (

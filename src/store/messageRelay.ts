@@ -14,6 +14,9 @@
 import { MeshMessage } from '../types/message';
 import { dbHasSeenMessage, dbMarkMessageSeen } from '../db/database';
 
+// Tracks incoming messages per peer ID for rate limiting
+const rateLimits: Record<string, {count: number, resetAt: number}> = {};
+
 export interface RelayDecision {
   shouldDeliver: boolean; // message is for us
   shouldRelay: boolean;   // message should be forwarded
@@ -34,6 +37,23 @@ export function decideMessageFate(
   ourNodeId: string,
   connectedPeers: string[],
 ): RelayDecision {
+  // 0. Rate limiting check
+  const now = Date.now();
+  const senderId = message.sender.id;
+  
+  if (!rateLimits[senderId] || now > rateLimits[senderId].resetAt) {
+    rateLimits[senderId] = { count: 1, resetAt: now + 60000 }; // 1 min window
+  } else {
+    rateLimits[senderId].count += 1;
+    if (rateLimits[senderId].count > 50) {
+      return {
+        shouldDeliver: false,
+        shouldRelay: false,
+        reason: 'Rate limit exceeded for sender (max 50/min)',
+      };
+    }
+  }
+
   // 1. Check if already expired
   if (Date.now() > message.routing.expiresAt) {
     return {

@@ -17,6 +17,7 @@ import { useIdentityStore } from '../store/identityStore';
 import { useMessagesStore, Message } from '../store/messagesStore';
 import { useMeshService } from '../store/meshService';
 import { base58ToBase64 } from '../crypto/encoding';
+import { dbResolvePeerId } from '../db/database';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,11 @@ function needsDateSeparator(current: Message, previous?: Message): boolean {
         new Date(current.createdAt).toDateString() !==
         new Date(previous.createdAt).toDateString()
     );
+}
+
+function resolveChatPeerId(peerId: string): string {
+    const resolved = dbResolvePeerId(peerId);
+    return resolved || peerId.replace(/[-\s]+/g, '');
 }
 
 // ─── Status Icon ──────────────────────────────────────────────────────────────
@@ -144,26 +150,29 @@ function DateSeparator({ timestamp }: { timestamp: number }) {
 export default function ChatScreen() {
     const { theme: t } = useThemeStore();
     const { identity } = useIdentityStore();
-    const { messages, loadMessages, sendMessage } = useMessagesStore();
-    const { sendMessage: meshSendMessage } = useMeshService();
+    const { messages, loadMessages, sendMessage, updateStatus } = useMessagesStore();
+    const messagesStore = useMessagesStore();
+    const { sendMessage: meshSendMessage, isRunning: meshRunning } = useMeshService();
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
 
     const peerId: string = route.params?.peerId ?? '';
     const peerAlias: string = route.params?.peerAlias ?? peerId;
-    const peerPublicKeyBase64: string = route.params?.peerPublicKeyBase64 ?? '';
+    const routePeerPublicKeyBase64: string = route.params?.peerPublicKeyBase64 ?? '';
 
     const [inputText, setInputText] = useState('');
     const [sending, setSending] = useState(false);
+    const [error, setError] = useState('');
     const flatListRef = useRef<FlatList>(null);
 
-    const conversation = messages[peerId] ?? [];
+    const activePeerId = resolveChatPeerId(peerId);
+    const conversation = messages[activePeerId] ?? [];
 
     useEffect(() => {
         if (identity) {
-            loadMessages(identity.publicKeyBase58, peerId);
+            loadMessages(identity.publicKeyBase58, activePeerId);
         }
-    }, [identity, peerId]);
+    }, [identity, activePeerId]);
 
     useEffect(() => {
         if (conversation.length > 0) {
@@ -179,29 +188,63 @@ export default function ChatScreen() {
         const text = inputText.trim();
         setInputText('');
         setSending(true);
+        setError('');
 
         try {
+            if (!meshRunning) {
+                setError('Mesh network is not connected. Please wait...');
+                setSending(false);
+                return;
+            }
+
+            // Resolve peer ID (could be short or full)
+            const finalPeerId = activePeerId;
+            if (finalPeerId.length < 32) {
+                const errorMsg = 'Invalid peer ID. Use the full public key or connect to this peer nearby first.';
+                setError(errorMsg);
+                console.warn('[ChatScreen]', errorMsg, { peerId });
+                setSending(false);
+                return;
+            }
+
             // Add to local store optimistically
             const localMsg = sendMessage({
                 myId: identity.publicKeyBase58,
-                peerId,
+                peerId: finalPeerId,
                 text,
             });
 
-            // Convert peer ID from Base58 to Base64 for encryption
+            // Use route-provided Base64 key when available, otherwise convert from Base58.
             try {
-                const peerPublicKeyBase64 = base58ToBase64(peerId);
-                
+                const publicKeyBase64 =
+                    routePeerPublicKeyBase64 || base58ToBase64(finalPeerId);
+
+                // Validate that the key is 44 bytes in base64 (32 bytes raw)
+                if (publicKeyBase64.length < 40 || publicKeyBase64.length > 50) {
+                    throw new Error(
+                        `Invalid public key format: Base64 length is ${publicKeyBase64.length}, expected ~44 bytes`,
+                    );
+                }
+
                 // Send via mesh network
                 await meshSendMessage({
-                    recipientId: peerId,
-                    recipientPublicKeyBase64: peerPublicKeyBase64,
+                    recipientId: finalPeerId,
+                    recipientPublicKeyBase64: publicKeyBase64,
                     text,
+                    messageId: localMsg.id,
                 });
             } catch (e) {
-                console.warn('[ChatScreen] Peer ID conversion failed:', e);
+                const errorMsg = `Failed to send: ${String(e).substring(0, 60)}...`;
+                setError(errorMsg);
+                console.warn('[ChatScreen] Send failed:', e);
+                // Update message status to failed
+                if (localMsg?.id) {
+                    messagesStore.updateStatus(localMsg.id, 'failed');
+                }
             }
         } catch (e) {
+            const errorMsg = `Error: ${String(e).substring(0, 60)}...`;
+            setError(errorMsg);
             console.error('[ChatScreen] Send failed:', e);
         } finally {
             setSending(false);
@@ -310,6 +353,17 @@ export default function ChatScreen() {
             )}
 
             {/* Input bar */}
+            {error && (
+                <View style={[styles.errorBanner, { backgroundColor: t.errorBg, borderColor: t.errorBorder }]}>
+                    <Icon name="alert-circle" size={14} color={t.errorText} />
+                    <Text style={[styles.errorText, { color: t.errorText }]} numberOfLines={1}>
+                        {error}
+                    </Text>
+                    <TouchableOpacity onPress={() => setError('')}>
+                        <Icon name="x" size={14} color={t.errorText} />
+                    </TouchableOpacity>
+                </View>
+            )}
             <View style={[styles.inputBar, { backgroundColor: t.surface, borderTopColor: t.border }]}>
                 <View style={[styles.inputWrap, { backgroundColor: t.surfaceAlt, borderColor: t.border }]}>
                     <TextInput
@@ -469,6 +523,19 @@ const styles = StyleSheet.create({
     },
 
     // Input bar
+    errorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        gap: 10,
+    },
+    errorText: {
+        flex: 1,
+        fontSize: 12,
+        fontFamily: Font.medium,
+    },
     inputBar: {
         flexDirection: 'row',
         alignItems: 'flex-end',

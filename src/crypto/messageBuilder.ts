@@ -34,6 +34,7 @@ export async function buildMessage(
   recipientPublicKeyBase64: string,
   content: MessageContent,
   type: MessageType = 'MSG',
+  messageId: string = uuidv4(),
 ): Promise<MeshMessage> {
   const now = Date.now();
 
@@ -46,7 +47,7 @@ export async function buildMessage(
 
   // 2. Build the unsigned message
   const unsigned: Omit<MeshMessage, 'signature'> = {
-    id: uuidv4(),
+    id: messageId,
     version: PROTOCOL_VERSION,
     type,
     sender: {

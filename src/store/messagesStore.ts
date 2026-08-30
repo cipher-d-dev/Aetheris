@@ -1,5 +1,6 @@
 import {create} from 'zustand';
 import {getDb} from '../db/database';
+import {dbDeleteConversation} from '../db/database';
 
 export interface Message {
   id: string;
@@ -31,6 +32,7 @@ interface MessagesState {
   }) => Message;
   receiveMessage: (msg: Message) => void;
   updateStatus: (messageId: string, status: Message['status']) => void;
+  deleteConversation: (myId: string, peerId: string) => void;
 }
 
 function generateId(): string {
@@ -51,22 +53,18 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
       const result = db.execute(
         `SELECT
            CASE WHEN sender_id = ? THEN recipient_id ELSE sender_id END AS peer_id,
-           MAX(created_at) AS last_time,
-           (SELECT encrypted_payload FROM messages m2
-            WHERE (m2.sender_id = ? AND m2.recipient_id = peer_id)
-               OR (m2.sender_id = peer_id AND m2.recipient_id = ?)
-            ORDER BY created_at DESC LIMIT 1) AS last_msg
+           MAX(created_at) AS last_time
          FROM messages
          WHERE sender_id = ? OR recipient_id = ?
-         GROUP BY peer_id
+         GROUP BY CASE WHEN sender_id = ? THEN recipient_id ELSE sender_id END
          ORDER BY last_time DESC`,
-        [myId, myId, myId, myId, myId],
+        [myId, myId, myId, myId],
       );
 
       const rows = result.rows?._array ?? [];
       const conversations: Conversation[] = rows.map((row: any) => ({
         peerId: row.peer_id,
-        lastMessage: row.last_msg ?? '',
+        lastMessage: '',
         lastTime: row.last_time,
         unread: 0,
       }));
@@ -94,7 +92,7 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
         id: row.id,
         senderId: row.sender_id,
         recipientId: row.recipient_id,
-        text: row.encrypted_payload, // plaintext stored here for now (Day 4 simplification)
+        text: row.text ?? '', 
         status: row.status,
         isOutbound: row.is_outbound === 1,
         createdAt: row.created_at,
@@ -122,20 +120,9 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
       createdAt: now,
     };
 
-    // Save to SQLite
-    try {
-      const db = getDb();
-      db.execute(
-        `INSERT INTO messages
-          (id, sender_id, recipient_id, encrypted_payload, nonce,
-           ephemeral_public_key, signature, is_outbound, ttl,
-           hop_count, status, created_at, expires_at)
-         VALUES (?, ?, ?, ?, '', '', '', 1, 7, 0, 'pending', ?, ?)`,
-        [id, myId, peerId, text, now, now + 72 * 60 * 60 * 1000],
-      );
-    } catch (e) {
-      console.log('[messagesStore] insert error:', e);
-    }
+    // Note: The actual message encryption, signing, and DB storage
+    // is handled by meshService.sendMessage(). This just updates UI state.
+    // The encrypted message will be inserted into DB by meshService.
 
     // Update in-memory state
     set(state => {
@@ -160,27 +147,8 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
   receiveMessage: (msg: Message) => {
     const peerId = msg.senderId;
 
-    // Save to SQLite
-    try {
-      const db = getDb();
-      db.execute(
-        `INSERT OR IGNORE INTO messages
-          (id, sender_id, recipient_id, encrypted_payload, nonce,
-           ephemeral_public_key, signature, is_outbound, ttl,
-           hop_count, status, created_at, expires_at)
-         VALUES (?, ?, ?, ?, '', '', '', 0, 7, 0, 'delivered', ?, ?)`,
-        [
-          msg.id,
-          msg.senderId,
-          msg.recipientId,
-          msg.text,
-          msg.createdAt,
-          msg.createdAt + 72 * 60 * 60 * 1000,
-        ],
-      );
-    } catch (e) {
-      console.log('[messagesStore] receive insert error:', e);
-    }
+    // Note: The DB storage (with encrypted payload) is handled by meshService.
+    // This just updates UI state with the decrypted text.
 
     set(state => {
       const existing = state.messages[peerId] ?? [];
@@ -217,5 +185,22 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
       }
       return {messages: updatedMessages};
     });
+  },
+
+  deleteConversation: (myId: string, peerId: string) => {
+    try {
+      dbDeleteConversation(myId, peerId);
+    } catch (e) {
+      console.log('[messagesStore] deleteConversation error:', e);
+    }
+
+    set(state => ({
+      conversations: state.conversations.filter(c => c.peerId !== peerId),
+      messages: (() => {
+        const updated = {...state.messages};
+        delete updated[peerId];
+        return updated;
+      })(),
+    }));
   },
 }));

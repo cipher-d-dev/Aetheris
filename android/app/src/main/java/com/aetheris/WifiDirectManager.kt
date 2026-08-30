@@ -11,6 +11,7 @@ import java.io.*
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 class WifiDirectManager(
@@ -37,7 +38,11 @@ class WifiDirectManager(
         wifiP2pManager.initialize(context, Looper.getMainLooper(), null)
 
     // Active sockets keyed by Aetheris peer ID
-    private val activeConnections = mutableMapOf<String, Socket>()
+    private val activeConnections = ConcurrentHashMap<String, Socket>()
+    private val connectionLocks = ConcurrentHashMap<String, Any>()
+
+    // Map Wi-Fi Direct MAC address to discovered peer list
+    private val discoveredPeers = mutableMapOf<String, WifiP2pDevice>()
 
     private var serverSocket: ServerSocket? = null
     private var isServerRunning = false
@@ -58,6 +63,10 @@ class WifiDirectManager(
                         Log.d(TAG, "Wi-Fi Direct disconnected")
                     }
                 }
+                WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
+                    // Peers changed — refresh the peer list
+                    requestPeerList()
+                }
             }
         }
     }
@@ -75,6 +84,41 @@ class WifiDirectManager(
         myNodeId = nodeId
         context.registerReceiver(receiver, intentFilter)
         Log.d(TAG, "WifiDirectManager started")
+        
+        // Dynamically set device name to prefix with Aetheris node ID
+        val deviceName = "Aeth_${nodeId.take(8)}"
+        setDeviceName(deviceName)
+
+        // Start discovering peers
+        wifiP2pManager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.d(TAG, "Wi-Fi Direct peer discovery started")
+            }
+            override fun onFailure(reason: Int) {
+                Log.e(TAG, "Wi-Fi Direct peer discovery failed: $reason")
+            }
+        })
+    }
+
+    private fun setDeviceName(newName: String) {
+        try {
+            val method = wifiP2pManager.javaClass.getMethod(
+                "setDeviceName",
+                WifiP2pManager.Channel::class.java,
+                String::class.java,
+                WifiP2pManager.ActionListener::class.java
+            )
+            method.invoke(wifiP2pManager, channel, newName, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    Log.d(TAG, "Device name set to: $newName")
+                }
+                override fun onFailure(reason: Int) {
+                    Log.e(TAG, "Failed to set device name: $reason")
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception setting device name: ${e.message}")
+        }
     }
 
     fun stop() {
@@ -95,8 +139,18 @@ class WifiDirectManager(
      * @param peerId        Aetheris node ID from BLE discovery
      */
     fun connectToDevice(deviceAddress: String, peerId: String) {
+        var finalAddress = deviceAddress
+        if (finalAddress.isEmpty()) {
+            finalAddress = getMacForPeerId(peerId) ?: ""
+            if (finalAddress.isEmpty()) {
+                Log.e(TAG, "Cannot resolve MAC address for peer $peerId")
+                onConnectionStateChanged(peerId, "failed")
+                return
+            }
+        }
+        
         val config = WifiP2pConfig().apply {
-            this.deviceAddress = deviceAddress
+            this.deviceAddress = finalAddress
             wps.setup = android.net.wifi.WpsInfo.PBC
         }
 
@@ -111,6 +165,36 @@ class WifiDirectManager(
                 onConnectionStateChanged(peerId, "failed")
             }
         })
+    }
+
+    /**
+     * Request Wi-Fi Direct peer list from the system.
+     * This populates discoveredPeers with MAC addresses that can be used for connections.
+     */
+    private fun requestPeerList() {
+        wifiP2pManager.requestPeers(channel) { peerList ->
+            if (peerList == null) {
+                Log.w(TAG, "Peer list is null")
+                return@requestPeers
+            }
+            Log.d(TAG, "Found ${peerList.deviceList.size} Wi-Fi Direct peer(s)")
+            discoveredPeers.clear()
+            for (device in peerList.deviceList) {
+                discoveredPeers[device.deviceAddress] = device
+                Log.d(TAG, "Peer: ${device.deviceName} (${device.deviceAddress}) status=${device.status}")
+            }
+        }
+    }
+
+    /**
+     * Get the Wi-Fi Direct MAC address for a peer based on node ID.
+     * For now, this is a simple mapping — in production this would match BLE discovery.
+     */
+    fun getMacForPeerId(peerId: String): String? {
+        // Try to find a device name matching the peer ID (simplified matching)
+        return discoveredPeers.values
+            .firstOrNull { it.deviceName?.contains(peerId.take(8)) == true }
+            ?.deviceAddress
     }
 
     private fun requestGroupInfo() {
@@ -212,7 +296,9 @@ class WifiDirectManager(
             Log.d(TAG, "Handshake complete with peer: $remotePeerId")
 
             activeConnections[remotePeerId] = socket
+            connectionLocks.putIfAbsent(remotePeerId, Any())
             onConnectionStateChanged(remotePeerId, "connected")
+            socket.soTimeout = 0
 
             // Read incoming frames
             while (!socket.isClosed) {
@@ -238,6 +324,7 @@ class WifiDirectManager(
             val peerId = activeConnections.entries.find { it.value == socket }?.key
             if (peerId != null) {
                 activeConnections.remove(peerId)
+                connectionLocks.remove(peerId)
                 onConnectionStateChanged(peerId, "disconnected")
             }
             try { socket.close() } catch (e: Exception) { }
@@ -253,15 +340,19 @@ class WifiDirectManager(
             return false
         }
         return try {
-            val output = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
-            output.writeInt(data.size)
-            output.write(data)
-            output.flush()
-            Log.d(TAG, "Sent ${data.size} bytes to $peerId")
+            val lock = connectionLocks.getOrPut(peerId) { Any() }
+            synchronized(lock) {
+                val output = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
+                output.writeInt(data.size)
+                output.write(data)
+                output.flush()
+                Log.d(TAG, "Sent ${data.size} bytes to $peerId")
+            }
             true
         } catch (e: Exception) {
             Log.e(TAG, "Send failed to $peerId: ${e.message}")
             activeConnections.remove(peerId)
+            connectionLocks.remove(peerId)
             onConnectionStateChanged(peerId, "disconnected")
             false
         }
@@ -279,6 +370,7 @@ class WifiDirectManager(
         activeConnections.remove(peerId)?.let {
             try { it.close() } catch (e: Exception) { }
         }
+        connectionLocks.remove(peerId)
     }
 
     private fun disconnectAll() {
@@ -286,6 +378,7 @@ class WifiDirectManager(
             try { it.close() } catch (e: Exception) { }
         }
         activeConnections.clear()
+        connectionLocks.clear()
     }
 
     private fun readLineFromStream(input: DataInputStream, maxBytes: Int): String? {

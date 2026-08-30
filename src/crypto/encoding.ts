@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer';
+import {Buffer} from 'buffer';
 
 const BASE58_ALPHABET =
   '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -31,12 +31,20 @@ export function formatShortId(base58Id: string): string {
 /**
  * Convert Base58 encoded public key to Base64 for crypto operations.
  * This is the reverse of toBase58.
+ * 
+ * The input Base58 should represent exactly 32 bytes (Ed25519 public key).
  */
 export function base58ToBase64(base58: string): string {
+  const input = base58.trim();
+  
+  if (input.length === 0) {
+    throw new Error('Base58 input is empty');
+  }
+
   let num = BigInt(0);
   const base = BigInt(58);
 
-  for (const char of base58) {
+  for (const char of input) {
     const digit = BASE58_ALPHABET.indexOf(char);
     if (digit < 0) throw new Error(`Invalid Base58 char: ${char}`);
     num = num * base + BigInt(digit);
@@ -49,9 +57,17 @@ export function base58ToBase64(base58: string): string {
   }
 
   // Re-add leading zeros
-  for (const char of base58) {
+  for (const char of input) {
     if (char !== '1') break;
     bytes.unshift(0);
+  }
+
+  // Validate: Ed25519 public keys should be 32 bytes
+  if (bytes.length !== 32) {
+    throw new Error(
+      `Base58 input "${input}" converts to ${bytes.length} bytes, but Ed25519 keys must be exactly 32 bytes. ` +
+      `Make sure you're using the full public key, not a short ID. Input length: ${input.length}`,
+    );
   }
 
   return Buffer.from(bytes).toString('base64');

@@ -1,10 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     FlatList,
     TouchableOpacity,
+    Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { useNavigation } from '@react-navigation/native';
@@ -27,9 +28,11 @@ function timeLabel(ts?: number): string {
 function ConversationRow({
     item,
     onPress,
+    onLongPress,
 }: {
     item: Conversation;
     onPress: () => void;
+    onLongPress: () => void;
 }) {
     const { theme: t } = useThemeStore();
     const initials = item.peerAlias
@@ -40,6 +43,8 @@ function ConversationRow({
         <TouchableOpacity
             style={[styles.row, { borderBottomColor: t.border }]}
             onPress={onPress}
+            onLongPress={onLongPress}
+            delayLongPress={500}
             activeOpacity={0.7}>
             {/* Avatar */}
             <View style={[styles.avatar, { backgroundColor: t.accentSoft, borderColor: t.accentBorder }]}>
@@ -74,8 +79,9 @@ function ConversationRow({
 export default function MessagesScreen() {
     const { theme: t } = useThemeStore();
     const { identity } = useIdentityStore();
-    const { conversations, loadConversations } = useMessagesStore();
+    const { conversations, loadConversations, deleteConversation } = useMessagesStore();
     const navigation = useNavigation<any>();
+    const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
 
     useEffect(() => {
         if (identity) loadConversations(identity.publicKeyBase58);
@@ -87,6 +93,26 @@ export default function MessagesScreen() {
 
     const openNewChat = () => {
         navigation.navigate('NewChat');
+    };
+
+    const handleDeleteConversation = (peerId: string, peerName: string) => {
+        Alert.alert(
+            'Delete Conversation',
+            `Are you sure you want to delete all messages with ${peerName}? This cannot be undone.`,
+            [
+                { text: 'Cancel', onPress: () => setSelectedPeerId(null), style: 'cancel' },
+                {
+                    text: 'Delete',
+                    onPress: () => {
+                        if (identity) {
+                            deleteConversation(identity.publicKeyBase58, peerId);
+                            setSelectedPeerId(null);
+                        }
+                    },
+                    style: 'destructive',
+                },
+            ],
+        );
     };
 
     return (
@@ -122,7 +148,14 @@ export default function MessagesScreen() {
                     data={conversations}
                     keyExtractor={item => item.peerId}
                     renderItem={({ item }) => (
-                        <ConversationRow item={item} onPress={() => openChat(item.peerId)} />
+                        <ConversationRow
+                            item={item}
+                            onPress={() => openChat(item.peerId)}
+                            onLongPress={() => handleDeleteConversation(
+                                item.peerId,
+                                item.peerAlias ?? item.peerId
+                            )}
+                        />
                     )}
                     showsVerticalScrollIndicator={false}
                 />

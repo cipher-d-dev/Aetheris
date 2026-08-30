@@ -7,6 +7,8 @@ import android.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.Timer
 import java.util.TimerTask
+import android.content.Intent
+import androidx.core.content.ContextCompat
 
 @ReactModule(name = AetherisModule.NAME)
 class AetherisModule(private val reactContext: ReactApplicationContext)
@@ -73,6 +75,10 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
             currentNodeId = nodeId
             wifiDirectManager.start(nodeId)
             bleManager.startAdvertising(nodeId)
+            
+            // Start Foreground Service
+            val serviceIntent = Intent(reactContext, AetherisService::class.java)
+            ContextCompat.startForegroundService(reactContext, serviceIntent)
 
             bleManager.startScanning { peerId, rssi ->
                 reactContext.runOnJSQueueThread {
@@ -113,6 +119,10 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
             wifiDirectManager.stop()
             stopPeerTimeoutChecker()
             seenPeers.clear()
+            
+            val serviceIntent = Intent(reactContext, AetherisService::class.java)
+            reactContext.stopService(serviceIntent)
+            
             promise.resolve(null)
         } catch (e: Exception) {
             promise.reject("STOP_ERROR", e.message ?: "Unknown error")
@@ -223,7 +233,6 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
     @ReactMethod
     fun addListener(eventName: String) {}
 
-    @ReactMethod
     fun removeListeners(count: Int) {}
 
     // ─── Cleanup ──────────────────────────────────────────────────────────────
@@ -234,5 +243,8 @@ class AetherisModule(private val reactContext: ReactApplicationContext)
         bleManager.stopScanning()
         wifiDirectManager.stop()
         stopPeerTimeoutChecker()
+        
+        val serviceIntent = Intent(reactContext, AetherisService::class.java)
+        reactContext.stopService(serviceIntent)
     }
 }

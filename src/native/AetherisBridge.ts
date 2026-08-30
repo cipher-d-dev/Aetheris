@@ -24,7 +24,9 @@ export type ConnectionState =
   | 'connecting'
   | 'connected'
   | 'disconnected'
-  | 'failed';
+  | 'failed'
+  | 'authenticating'
+  | 'authenticated';
 
 export interface ConnectionStateEvent {
   peerId: string;
