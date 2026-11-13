@@ -11,20 +11,26 @@
  */
 
 import {create} from 'zustand';
-import {MeshMessage, MessageContent} from '../types/message';
+import {MeshMessage} from '../types/message';
 import {
   AetherisBridge,
   MessageReceivedEvent,
   ConnectionStateEvent,
 } from '../native/AetherisBridge';
 import {
+  buildAck,
   buildMessage,
   openMessage,
   serializeMessage,
   deserializeMessage,
 } from '../crypto/messageBuilder';
+import {verifySignature} from '../crypto/signing';
 import {loadPrivateKey} from '../crypto/identity';
-import {decideMessageFate, prepareForRelay} from './messageRelay';
+import {
+  decideMessageFate,
+  prepareForRelay,
+  selectRelayPeers,
+} from './messageRelay';
 import {dbInsertMessage} from '../db/database';
 import {getPendingOutboundMessages} from '../db/messages';
 import {useMessagesStore} from './messagesStore';
@@ -290,14 +296,18 @@ export const useMeshService = create<MeshServiceState>((set, get) => {
           text: text,
         });
 
-        // 4. Send to all connected peers (they will decide to relay or deliver)
+        // 4. Send to the recipient directly when possible; otherwise use the
+        // bounded Spray-and-Wait fan-out.
         const connectedPeerIds = get().getConnectedPeerIds();
+        const sendPeerIds = connectedPeerIds.includes(recipientId)
+          ? [recipientId]
+          : selectRelayPeers(connectedPeerIds, 2);
         console.log(
-          `[meshService] Sending message ${message.id} to ${connectedPeerIds.length} peer(s)`,
+          `[meshService] Sending message ${message.id} to ${sendPeerIds.length} peer(s)`,
         );
 
         let success = false;
-        for (const peerId of connectedPeerIds) {
+        for (const peerId of sendPeerIds) {
           try {
             await AetherisBridge.sendRawBytes(peerId, base64Data);
             success = true;
@@ -361,6 +371,13 @@ async function handleMessageReceived(
     }
 
     console.log(`[meshService] Received message ${message.id} from ${peerId}`);
+
+    // Relays must reject forged messages before they enter the seen cache or
+    // consume routing capacity.
+    if (!(await verifySignature(message))) {
+      console.warn(`[meshService] Rejecting message with invalid signature: ${message.id}`);
+      return;
+    }
 
     // 3. Decide: deliver, relay, or drop
     const connectedPeerIds = get().getConnectedPeerIds();
@@ -442,6 +459,17 @@ async function handleMessageReceived(
         const content = await openMessage(message, privateKey);
 
         if (content) {
+          if (message.type === 'ACK') {
+            const ackedMessageId = content.ackedMessageId;
+            if (ackedMessageId) {
+              useMessagesStore.getState().updateStatus(ackedMessageId, 'delivered');
+              console.log(`[meshService] Delivery ACK received for ${ackedMessageId}`);
+            } else {
+              console.warn(`[meshService] ACK ${message.id} had no acknowledged message ID`);
+            }
+            return;
+          }
+
           const textContent = (content as {text?: string}).text || '';
 
           // Store in DB with FULL encrypted payload and text
@@ -472,6 +500,30 @@ async function handleMessageReceived(
           });
 
           console.log(`[meshService] Message delivered to UI`);
+
+          // ACKs are ordinary mesh messages, so an intermediary can relay
+          // them when the original sender is no longer directly reachable.
+          try {
+            const ack = await buildAck(
+              ourPublicKeyBase58,
+              message.sender.id,
+              base58ToBase64(message.sender.id),
+              message.id,
+            );
+            const ackData = Buffer.from(
+              serializeMessage(ack),
+              'utf8',
+            ).toString('base64');
+            const ackPeers = connectedPeerIds.includes(peerId)
+              ? [peerId]
+              : selectRelayPeers(connectedPeerIds, 2, peerId);
+
+            for (const ackPeerId of ackPeers) {
+              await AetherisBridge.sendRawBytes(ackPeerId, ackData);
+            }
+          } catch (e) {
+            console.warn(`[meshService] Failed to send ACK for ${message.id}:`, e);
+          }
         } else {
           console.warn('[meshService] Decryption returned null - cannot parse content');
         }
