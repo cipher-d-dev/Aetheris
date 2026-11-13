@@ -25,6 +25,24 @@ export interface RelayDecision {
 }
 
 /**
+ * Select up to count peers, optionally excluding a peer that just forwarded
+ * the message to us.
+ */
+export function selectRelayPeers(
+  peers: string[],
+  count: number,
+  excludePeerId?: string,
+): string[] {
+  const candidates = peers.filter(peerId => peerId !== excludePeerId);
+  if (candidates.length <= count) {
+    return [...candidates];
+  }
+
+  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+/**
  * Determine if we should deliver, relay, or drop a received message.
  *
  * @param message         The received MeshMessage
@@ -111,7 +129,7 @@ export function decideMessageFate(
 
   // 7. Select random peers for Spray-and-Wait
   const sprayCount = Math.min(2, relayTargets.length); // forward to up to 2 peers
-  const nextHops = selectRandomPeers(relayTargets, sprayCount);
+  const nextHops = selectRelayPeers(relayTargets, sprayCount);
 
   return {
     shouldDeliver: false,
@@ -140,16 +158,6 @@ export function prepareForRelay(
       hops: [...message.routing.hops, ourNodeId],
     },
   };
-}
-
-/**
- * Select N random peers from a list (for Spray-and-Wait).
- */
-function selectRandomPeers(peers: string[], count: number): string[] {
-  if (peers.length <= count) return [...peers];
-
-  const shuffled = [...peers].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, count);
 }
 
 /**
