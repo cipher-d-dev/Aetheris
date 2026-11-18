@@ -91,15 +91,27 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // Release key: put these in ~/.gradle/gradle.properties (never in git).
+        // See README -> "Release build".
+        if (project.hasProperty('AETHERIS_UPLOAD_STORE_FILE')) {
+            release {
+                storeFile file(AETHERIS_UPLOAD_STORE_FILE)
+                storePassword AETHERIS_UPLOAD_STORE_PASSWORD
+                keyAlias AETHERIS_UPLOAD_KEY_ALIAS
+                keyPassword AETHERIS_UPLOAD_KEY_PASSWORD
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Uses your release key when configured, else the debug key so
+            // `assembleRelease` still works for local testing.
+            signingConfig project.hasProperty('AETHERIS_UPLOAD_STORE_FILE')
+                ? signingConfigs.release
+                : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
