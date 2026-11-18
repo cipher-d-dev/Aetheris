@@ -1,129 +1,124 @@
 import {create} from 'zustand';
+import {Appearance} from 'react-native';
 
-// ─── Font Families ────────────────────────────────────────────────────────────
-// Fonts live in android/app/src/main/assets/fonts/
-// React Native matches by filename (without extension)
+// ─── Typography ───────────────────────────────────────────────────────────────
+// Plus Jakarta Sans (SIL Open Font License), in android/app/src/main/assets/fonts.
+// On Android the family name is the file name without extension.
 
 export const Font = {
-  regular: 'Inter-Regular',
-  medium: 'Inter-Medium',
-  semiBold: 'Inter-SemiBold',
-  bold: 'Inter-Bold',
-  extraBold: 'Inter-ExtraBold',
+  regular: 'PlusJakartaSans-Regular',
+  medium: 'PlusJakartaSans-Medium',
+  semiBold: 'PlusJakartaSans-SemiBold',
+  bold: 'PlusJakartaSans-Bold',
+  extraBold: 'PlusJakartaSans-ExtraBold',
+};
+
+export const Type = {
+  largeTitle: {fontFamily: Font.extraBold, fontSize: 30, letterSpacing: -0.8},
+  title: {fontFamily: Font.bold, fontSize: 20, letterSpacing: -0.3},
+  headline: {fontFamily: Font.semiBold, fontSize: 16, letterSpacing: -0.1},
+  body: {fontFamily: Font.regular, fontSize: 15.5, lineHeight: 22},
+  callout: {fontFamily: Font.medium, fontSize: 14},
+  footnote: {fontFamily: Font.regular, fontSize: 13},
+  caption: {fontFamily: Font.medium, fontSize: 11.5},
 };
 
 // ─── Palettes ─────────────────────────────────────────────────────────────────
 
 export const lightTheme = {
-  // Backgrounds
-  bg: '#F4F5F9',
-  surface: '#FFFFFF',
-  surfaceAlt: '#EEF0F5',
-  border: '#E2E5ED',
+  isDark: false,
+  bg: '#FFFFFF',
+  surface: '#F5F6F8',
+  surfaceAlt: '#ECEEF2',
+  border: '#E8EAEE',
+  separator: '#EFF1F4',
 
-  // Accent system — cool indigo-violet
-  accent: '#6C5CE7',
-  accentSoft: 'rgba(108, 92, 231, 0.08)',
-  accentBorder: 'rgba(108, 92, 231, 0.2)',
-  accentGlow: 'rgba(108, 92, 231, 0.25)',
-  gradient: ['#6C5CE7', '#A17FE0'] as [string, string],
+  primary: '#5B5BD6',
+  primaryPressed: '#4F4FC4',
+  primarySoft: '#EEEEFC',
+  onPrimary: '#FFFFFF',
 
-  // Text
-  text: '#1A1D26',
-  textSub: '#5A6175',
-  textMuted: '#8E95A9',
+  text: '#0F1419',
+  textSub: '#5B6573',
+  textMuted: '#8C96A3',
 
-  // Overlays
-  overlay: 'rgba(0,0,0,0.35)',
-  modalBg: '#FFFFFF',
-
-  // Tab bar
-  tabBar: '#FFFFFF',
-  tabBarBorder: '#E2E5ED',
-
-  // Status colors
-  errorBg: '#FFF5F5',
-  errorBorder: '#FED7D7',
-  errorText: '#E53E3E',
-  errorSub: '#FC8181',
-  successBg: '#F0FFF4',
-  successBorder: '#C6F6D5',
-  successText: '#38A169',
-
-  // Chat bubbles
-  bubbleOut: '#6C5CE7',
+  chatBg: '#F2F3F7',
+  bubbleOut: '#5B5BD6',
   bubbleOutText: '#FFFFFF',
+  bubbleOutMeta: 'rgba(255,255,255,0.72)',
   bubbleIn: '#FFFFFF',
-  bubbleInText: '#1A1D26',
-  bubbleInBorder: '#E2E5ED',
+  bubbleInText: '#0F1419',
+  bubbleInMeta: '#8C96A3',
 
-  // Online indicator
-  online: '#38D9A9',
+  online: '#22C55E',
+  danger: '#E5484D',
+  dangerSoft: '#FDECEC',
+  warningSoft: '#FFF6E5',
+  warningText: '#A35200',
+  overlay: 'rgba(15,20,25,0.45)',
+  shadow: '#0F1419',
 };
 
-export const darkTheme = {
-  // Backgrounds — deep OLED-friendly navy
-  bg: '#0B0E14',
-  surface: '#141820',
-  surfaceAlt: '#111520',
-  border: '#1E2430',
+export type AppTheme = typeof lightTheme;
 
-  // Accent system — luminous cyan-to-violet
-  accent: '#7B8CFF',
-  accentSoft: 'rgba(123, 140, 255, 0.1)',
-  accentBorder: 'rgba(123, 140, 255, 0.2)',
-  accentGlow: 'rgba(123, 140, 255, 0.3)',
-  gradient: ['#7B8CFF', '#A78BFA'] as [string, string],
+export const darkTheme: AppTheme = {
+  isDark: true,
+  bg: '#0E0F13',
+  surface: '#17181E',
+  surfaceAlt: '#202129',
+  border: '#26272F',
+  separator: '#1D1E25',
 
-  // Text — high contrast for OLED
-  text: '#F0F2F8',
-  textSub: '#8892AB',
-  textMuted: '#4A5268',
+  primary: '#7C7CF0',
+  primaryPressed: '#6C6CE0',
+  primarySoft: '#23233F',
+  onPrimary: '#FFFFFF',
 
-  // Overlays
-  overlay: 'rgba(0,0,0,0.7)',
-  modalBg: '#141820',
+  text: '#EEEFF2',
+  textSub: '#A3A7B3',
+  textMuted: '#6F7482',
 
-  // Tab bar
-  tabBar: '#0F1219',
-  tabBarBorder: '#1A1F2B',
-
-  // Status colors
-  errorBg: 'rgba(239, 68, 68, 0.1)',
-  errorBorder: 'rgba(239, 68, 68, 0.2)',
-  errorText: '#FF6B6B',
-  errorSub: '#C53030',
-  successBg: 'rgba(52, 211, 153, 0.1)',
-  successBorder: 'rgba(52, 211, 153, 0.2)',
-  successText: '#34D399',
-
-  // Chat bubbles — gradient accent for outbound
-  bubbleOut: '#7B8CFF',
+  chatBg: '#0A0B0E',
+  bubbleOut: '#5B5BD6',
   bubbleOutText: '#FFFFFF',
-  bubbleIn: '#181D28',
-  bubbleInText: '#F0F2F8',
-  bubbleInBorder: '#242A38',
+  bubbleOutMeta: 'rgba(255,255,255,0.68)',
+  bubbleIn: '#1C1D24',
+  bubbleInText: '#EEEFF2',
+  bubbleInMeta: '#7C8190',
 
-  // Online indicator
   online: '#34D399',
+  danger: '#FF6369',
+  dangerSoft: '#2C1416',
+  warningSoft: '#2B2111',
+  warningText: '#FFB224',
+  overlay: 'rgba(0,0,0,0.6)',
+  shadow: '#000000',
 };
 
-export type AppTheme = typeof darkTheme;
+// ─── Store ────────────────────────────────────────────────────────────────────
 
-// ─── Zustand Store ────────────────────────────────────────────────────────────
+export type ThemeMode = 'system' | 'light' | 'dark';
 
 interface ThemeState {
+  mode: ThemeMode;
   isDark: boolean;
   theme: AppTheme;
-  toggle: () => void;
+  setMode: (mode: ThemeMode) => void;
+  /** Re-read the system setting (called when it changes). */
+  syncSystem: () => void;
 }
 
-export const useThemeStore = create<ThemeState>(set => ({
-  isDark: true,
-  theme: darkTheme,
-  toggle: () =>
-    set(state => ({
-      isDark: !state.isDark,
-      theme: state.isDark ? lightTheme : darkTheme,
-    })),
+function resolve(mode: ThemeMode): boolean {
+  return mode === 'dark' || (mode === 'system' && Appearance.getColorScheme() === 'dark');
+}
+
+export const useThemeStore = create<ThemeState>((set, get) => ({
+  mode: 'system',
+  isDark: resolve('system'),
+  theme: resolve('system') ? darkTheme : lightTheme,
+  setMode: mode => {
+    const isDark = resolve(mode);
+    set({mode, isDark, theme: isDark ? darkTheme : lightTheme});
+  },
+  syncSystem: () => get().setMode(get().mode),
 }));

@@ -135,6 +135,8 @@ export function dbMarkConversationRead(conversationId: string): void {
 
 export interface ConversationRow {
   id: string;
+  /** Status of the last message if we sent it (for ticks in the list) */
+  lastOutboundStatus?: MessageStatus;
   lastText: string;
   lastKind: ContentKind;
   lastTime: number;
@@ -144,7 +146,7 @@ export interface ConversationRow {
 export function dbListConversations(): ConversationRow[] {
   return rows(
     `SELECT m.conversation_id AS id, m.text AS last_text, m.kind AS last_kind,
-            m.created_at AS last_time,
+            m.created_at AS last_time, m.is_outbound AS last_out, m.status AS last_status,
             (SELECT COUNT(*) FROM messages u WHERE u.conversation_id = m.conversation_id AND u.read = 0) AS unread
        FROM messages m
        JOIN (SELECT conversation_id, MAX(created_at) AS t FROM messages GROUP BY conversation_id) latest
@@ -153,6 +155,7 @@ export function dbListConversations(): ConversationRow[] {
       ORDER BY m.created_at DESC`,
   ).map(r => ({
     id: r.id,
+    lastOutboundStatus: r.last_out === 1 ? (r.last_status as MessageStatus) : undefined,
     lastText: r.last_text ?? '',
     lastKind: (r.last_kind ?? 'text') as ContentKind,
     lastTime: r.last_time,

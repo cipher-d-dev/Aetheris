@@ -25,7 +25,7 @@ jobs:
       - run: npm test -- --ci
 
   android:
-    name: Android debug build
+    name: Android build (installable APK)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,11 +39,16 @@ jobs:
           java-version: 17
           cache: gradle
       - run: npm ci
-      - name: Build APK (arm64 only, to keep CI fast)
+      # Release variant: the JS bundle is inside the APK, so it runs on any
+      # phone without a computer running Metro. Signed with the debug key
+      # unless a release key is configured (see README).
+      # 64-bit and 32-bit ARM: many budget phones (e.g. Tecno Spark 7) run a
+      # 32-bit Android and reject an arm64-only APK with "App not installed".
+      - name: Build APK (ARM 64-bit + 32-bit)
         working-directory: android
-        run: ./gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a --no-daemon
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: aetheris-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: aetheris-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 14

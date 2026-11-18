@@ -1,16 +1,17 @@
 import React, {useState} from 'react';
-import {View, Text, TextInput, TouchableOpacity, FlatList} from 'react-native';
-import Icon from 'react-native-vector-icons/Feather';
+import {View, Text, TextInput, StyleSheet, FlatList} from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {useThemeStore, Font} from '../theme';
+import {Font, Type, useThemeStore} from '../theme';
 import {useMeshService} from '../store/meshService';
-import {PersonRow, styles, usePeople} from './NewChatScreen';
+import IconButton from '../ui/IconButton';
+import Button from '../ui/Button';
+import {Icon} from '../ui/Icon';
+import {PersonRow, Searching, usePeople} from './PeopleScreen';
 
 /**
- * Groups are local metadata: each group message is encrypted separately for
- * every member and carries the group's name + member list, so members learn
- * about the group from the first message they receive. No server, no shared
- * group key to distribute.
+ * Each group message is encrypted separately for every member and carries the
+ * group's name and members, so people learn about the group from the first
+ * message. No server, no shared key.
  */
 export default function NewGroupScreen() {
   const {theme: t} = useThemeStore();
@@ -20,66 +21,77 @@ export default function NewGroupScreen() {
   const [name, setName] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
 
-  const toggle = (id: string) =>
-    setSelected(s => (s.includes(id) ? s.filter(x => x !== id) : [...s, id]));
-
+  const toggle = (id: string) => setSelected(s => (s.includes(id) ? s.filter(x => x !== id) : [...s, id]));
   const canCreate = name.trim().length > 0 && selected.length > 0;
-
-  const create = () => {
-    if (!canCreate) return;
-    const conversationId = createGroup(name, selected);
-    navigation.replace('Chat', {conversationId});
-  };
 
   return (
     <View style={[styles.container, {backgroundColor: t.bg}]}>
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={[styles.back, {backgroundColor: t.surfaceAlt, borderColor: t.border}]}>
-          <Icon name="arrow-left" size={18} color={t.text} />
-        </TouchableOpacity>
-        <Text style={[styles.title, {color: t.text, flex: 1}]}>New group</Text>
-        <TouchableOpacity onPress={create} disabled={!canCreate}>
-          <Text style={{color: canCreate ? t.accent : t.textMuted, fontFamily: Font.bold, fontSize: 15}}>
-            Create
-          </Text>
-        </TouchableOpacity>
+        <IconButton name="chevron-back" onPress={() => navigation.goBack()} />
+        <Text style={[Type.title, {color: t.text, flex: 1}]}>New group</Text>
       </View>
 
-      <View style={[styles.inputWrap, {backgroundColor: t.surface, borderColor: t.border}]}>
+      <View style={[styles.nameBox, {backgroundColor: t.surface}]}>
+        <View style={[styles.groupIcon, {backgroundColor: t.primarySoft}]}>
+          <Icon name="people" size={22} color={t.primary} />
+        </View>
         <TextInput
-          style={[styles.input, {color: t.text}]}
-          placeholder="Group name"
-          placeholderTextColor={t.textMuted}
           value={name}
           onChangeText={setName}
+          placeholder="Group name"
+          placeholderTextColor={t.textMuted}
           maxLength={64}
+          style={[styles.nameInput, {color: t.text}]}
         />
       </View>
 
       <Text style={[styles.section, {color: t.textMuted}]}>
-        MEMBERS {selected.length > 0 ? `(${selected.length} selected)` : ''}
+        {selected.length ? `${selected.length} selected` : 'Add people'}
       </Text>
-      <FlatList
-        data={people}
-        keyExtractor={p => p.id}
-        contentContainerStyle={{paddingHorizontal: 20, paddingBottom: 40}}
-        ListEmptyComponent={
-          <Text style={[styles.empty, {color: t.textMuted}]}>
-            You can add people once you've seen them on the mesh.
-          </Text>
-        }
-        renderItem={({item}) => (
-          <PersonRow
-            id={item.id}
-            alias={item.alias}
-            hops={item.hops}
-            selected={selected.includes(item.id)}
-            onPress={() => toggle(item.id)}
-          />
-        )}
-      />
+
+      {people.length === 0 ? (
+        <Searching title="No one nearby yet" subtitle="People you can add will show up here." />
+      ) : (
+        <FlatList
+          data={people}
+          keyExtractor={p => p.id}
+          contentContainerStyle={{paddingBottom: 120}}
+          renderItem={({item}) => {
+            const on = selected.includes(item.id);
+            return (
+              <PersonRow
+                person={item}
+                onPress={() => toggle(item.id)}
+                right={
+                  <Icon
+                    name={on ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={26}
+                    color={on ? t.primary : t.textMuted}
+                  />
+                }
+              />
+            );
+          }}
+        />
+      )}
+
+      <View style={[styles.footer, {backgroundColor: t.bg}]}>
+        <Button
+          title="Create group"
+          disabled={!canCreate}
+          onPress={() => navigation.replace('Chat', {conversationId: createGroup(name, selected)})}
+        />
+      </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {flex: 1},
+  header: {flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingTop: 44, paddingBottom: 8},
+  nameBox: {flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 16, padding: 10, borderRadius: 18},
+  groupIcon: {width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center'},
+  nameInput: {flex: 1, fontFamily: Font.semiBold, fontSize: 17, paddingVertical: 8},
+  section: {fontFamily: Font.semiBold, fontSize: 13, paddingHorizontal: 20, paddingTop: 22, paddingBottom: 6},
+  footer: {position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16, paddingBottom: 24},
+});

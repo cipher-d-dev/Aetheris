@@ -16,9 +16,6 @@ import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.*
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.util.concurrent.Executors
 
 /**
@@ -263,28 +260,6 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
     fun stopAudio(promise: Promise) {
         media.stopPlayback()
         promise.resolve(null)
-    }
-
-    /**
-     * Scan a QR code with Google's code scanner. It runs in Play Services,
-     * so the app needs no camera permission. Resolves null if cancelled.
-     */
-    @ReactMethod
-    fun scanQrCode(promise: Promise) {
-        val activity = currentActivity
-        if (activity == null) {
-            promise.reject("NO_ACTIVITY", "App is not in the foreground")
-            return
-        }
-        val options = GmsBarcodeScannerOptions.Builder()
-            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-            .build()
-        GmsBarcodeScanning.getClient(activity, options).startScan()
-            .addOnSuccessListener { barcode -> promise.resolve(barcode.rawValue) }
-            .addOnCanceledListener { promise.resolve(null) }
-            .addOnFailureListener { e ->
-                promise.reject("SCAN_FAILED", e.message ?: "Scanner unavailable", e)
-            }
     }
 
     // ─── Notifications ─────────────────────────────────────────────────────

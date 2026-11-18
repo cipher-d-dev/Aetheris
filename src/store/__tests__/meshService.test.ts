@@ -32,8 +32,6 @@ import {AetherisBridge} from '../../native/AetherisBridge';
 import {initDatabase, dbGetConversation, dbGetGroup} from '../../db/database';
 import {useMeshService} from '../meshService';
 import {displayName, useMessagesStore} from '../messagesStore';
-import {addContactFromText} from '../../contacts/addContact';
-import {buildContactLink} from '../../contacts/contactLink';
 import {dbGetPeer, dbSetNickname, dbUpdateMessageStatus} from '../../db/database';
 import {MeshNode} from '../../mesh/meshNode';
 import {createRnCrypto} from '../../mesh/rnCrypto';
@@ -151,18 +149,11 @@ describe('meshService with a peer phone', () => {
     expect(dbGetConversation(`group:${gid}`).at(-1)!.text).toBe('new group!');
   });
 
-  it('adds contacts from QR/links, verifies scans, and prefers nicknames', async () => {
-    const dana = await keypair();
-    const link = buildContactLink(dana.id, 'Dana');
-    expect(addContactFromText(link, me.id, false)).toMatchObject({ok: true});
-    expect(dbGetPeer(dana.id)).toMatchObject({alias: 'Dana', verified: false});
-    addContactFromText(link, me.id, true); // scanned in person later
-    expect(dbGetPeer(dana.id)!.verified).toBe(true);
-    expect(addContactFromText(buildContactLink(me.id), me.id, true)).toMatchObject({reason: 'self'});
-
+  it('shows the name people chose, unless you renamed them', async () => {
     expect(displayName(bob.id)).toBe('Bob');
     dbSetNickname(bob.id, 'Bobby (work)');
     expect(displayName(bob.id, 'Bob')).toBe('Bobby (work)');
+    expect(dbGetPeer(bob.id)).toMatchObject({alias: 'Bob', nickname: 'Bobby (work)'});
     dbSetNickname(bob.id, '');
     expect(displayName(bob.id)).toBe('Bob');
   });

@@ -16,16 +16,12 @@ You get a delivery receipt (double tick ✓✓) when the message arrives. Long-p
 
 ## Features
 
-- Add people by **scanning their QR code** (this also verifies them ✓🛡) or by sharing a link
-- 1:1 and group chats
-- Photos (auto-compressed) and voice notes
-- Sent / delivered ticks, plus the route each message took
-- **Mesh** tab showing who's in range and who's reachable through other phones (with hop counts)
-- Keeps relaying in the background
-- Battery modes: Performance / Balanced / Saver
-- Display names, plus private nicknames for your contacts
-- Long-press a message: info and route, delete, send again
-- **Diagnostics** (Settings): live routing table and an event log you can share
+- Open the app, type your name, and you're in. No phone number, no account.
+- **People** tab: everyone nearby with Aetheris, by name. Tap someone to chat.
+- Chats that feel like any modern messenger: ✓ sent, ✓✓ delivered, photos, voice messages, group chats
+- If someone has walked away, your message waits and is delivered when they're back nearby
+- Light and dark mode, plus a "Save battery" switch
+- Settings → Help → "Send a problem report" when something doesn't connect
 
 ## Run it
 
@@ -36,7 +32,7 @@ npm install
 npx react-native run-android
 ```
 
-Install it on each phone, open it, and allow the "Nearby devices" / location and notification permissions.
+Install it on each phone, open it, enter a name and tap **Allow and continue**.
 
 ### Release build
 
@@ -66,8 +62,8 @@ Install it on every test phone. All phones need a build from the same key, or An
 ## Test the multi-hop relay
 
 1. Put phone **A** and phone **C** far apart, out of range of each other (different floors or ~100 m+), with phone **B** in between.
-2. Wait for the Mesh tab on A to show C under *Through the mesh · 2 hops*.
-3. Send a message from A to C. It should show ✓✓, and long-pressing it should show `You → B → C`.
+2. Wait for C to appear in A's **People** tab.
+3. Send a message from A to C. It should show ✓✓. Long-press it and tap **Info**: it says it reached C through 1 other phone.
 4. **Store-carry-forward:** turn C off, send from A, carry B over to C, and turn C on. The message is delivered and the receipt comes back the same way.
 
 ## Limits
@@ -76,8 +72,7 @@ Install it on every test phone. All phones need a build from the same key, or An
 - **Range:** about 30–100 m per hop, depending on walls and phones.
 - **Mesh size:** built for a few to a few dozen phones. Routes are capped at 16 hops.
 - **Attachments** are capped at ~300 KB, because every relay has to carry them.
-- Display names are chosen by each person. They're signed, so they can't be spoofed, but anyone can pick any name. Scan a QR code in person to be sure who someone is.
-- The QR scanner comes from Google Play Services and is downloaded when the app is installed. On a phone that installed the app offline, use "Share link" instead.
+- Names are chosen by each person. Another phone can't fake someone else's name for the same person, but two people can pick the same name; when that happens a short code is shown next to it. You can rename anyone (only you see it).
 
 ## Code map
 
@@ -99,7 +94,7 @@ npm run typecheck
 npm run lint
 ```
 
-GitHub Actions runs these on every pull request and builds a debug APK, which you can download from the run's artifacts.
+GitHub Actions runs these on every pull request and builds a ready-to-install APK (`aetheris-apk`), which you can download from the run's artifacts.
 
 The tests simulate meshes of up to 14 phones (including random layouts checked against true shortest paths), links breaking, offline carry-and-deliver, lost receipts and forged messages. They also run one relay end to end with real libsodium, and the app's service layer against real SQLite.
 
