@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import { useThemeStore, Font } from '../theme';
+import { useMessagesStore } from '../store/messagesStore';
 
 import IdentityScreen from '../screens/IdentityScreen';
 import NearbyScreen from '../screens/NearbyScreen';
@@ -43,6 +44,7 @@ const Tab = createBottomTabNavigator();
 
 export default function AppNavigator() {
     const { theme: t } = useThemeStore();
+    const unread = useMessagesStore(s => s.conversations.reduce((n, c) => n + c.unread, 0));
 
     return (
         <Tab.Navigator
@@ -86,6 +88,10 @@ export default function AppNavigator() {
             <Tab.Screen
                 name="Messages"
                 component={MessagesStackNavigator}
+                options={{
+                    tabBarBadge: unread > 0 ? (unread > 99 ? '99+' : unread) : undefined,
+                    tabBarBadgeStyle: { backgroundColor: t.accent, fontFamily: Font.bold, fontSize: 10 },
+                }}
                 listeners={({ navigation }) => ({
                     tabPress: () => {
                         // Always go back to conversation list when tapping the tab

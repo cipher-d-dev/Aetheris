@@ -119,6 +119,8 @@ export interface MeshEvents {
   onSent?(messageId: string): void;
   /** One of our messages expired without an ACK. */
   onExpired?(messageId: string): void;
+  /** Number of messages held on this phone changed. */
+  onCarryChanged?(count: number): void;
   /** Neighbours or routes changed — refresh UI. */
   onTopologyChanged?(): void;
   log?(msg: string): void;
@@ -438,6 +440,11 @@ export class MeshNode {
     return message;
   }
 
+  /** Stop trying to deliver one of our own messages. */
+  cancel(messageId: string): void {
+    if (this.carry.get(messageId)?.own) this.removeCarry(messageId);
+  }
+
   /** Re-queue one of our earlier messages (e.g. after restart). */
   adoptOwnMessage(message: MeshMessage) {
     if (this.carry.has(message.id)) return;
@@ -664,11 +671,15 @@ export class MeshNode {
     this.carrySizes.set(rec.message.id, JSON.stringify(rec.message).length);
     this.store.carryPut(rec);
     if (!rec.own) this.enforceCarryLimits(rec.message.id);
+    this.events.onCarryChanged?.(this.carry.size);
   }
 
   private removeCarry(id: string) {
     this.carrySizes.delete(id);
-    if (this.carry.delete(id)) this.store.carryRemove(id);
+    if (this.carry.delete(id)) {
+      this.store.carryRemove(id);
+      this.events.onCarryChanged?.(this.carry.size);
+    }
   }
 
   /** Evict the oldest messages we hold for others when over budget. */

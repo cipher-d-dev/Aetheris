@@ -28,6 +28,8 @@ import {
   dbUpsertGroup,
   dbUpsertPeer,
   dbAddGroupDelivery,
+  dbDeleteMessage,
+  dbGetMessage,
 } from '../db/database';
 import {
   displayName,
@@ -139,6 +141,10 @@ interface MeshState {
   setPowerMode: (mode: PowerMode) => void;
   sendToConversation: (conversationId: string, content: OutgoingContent) => Promise<string>;
   createGroup: (name: string, memberIds: string[]) => string;
+  /** Delete on this phone; also stops delivery if it hasn't arrived yet. */
+  deleteMessage: (messageId: string) => void;
+  /** Send a failed message again as a new message. */
+  retryMessage: (messageId: string) => Promise<void>;
 }
 
 let node: MeshNode | null = null;
@@ -319,6 +325,9 @@ export const useMeshService = create<MeshState>((set, get) => {
             onSent,
             onExpired,
             onTopologyChanged: refreshTopology,
+            onCarryChanged: count => {
+              if (get().carrying !== count) set({carrying: count});
+            },
             log: msg => console.log(msg),
           },
           {...profile.mesh, routeTimeoutMs: ROUTE_TIMEOUT_MS},
@@ -443,6 +452,25 @@ export const useMeshService = create<MeshState>((set, get) => {
       }
       set({carrying: node.carryCount()});
       return id;
+    },
+
+    deleteMessage: (messageId: string) => {
+      const conversationId = dbGetMessageConversation(messageId);
+      const subs = dbDeleteMessage(messageId);
+      for (const id of [messageId, ...subs]) node?.cancel(id);
+      set({carrying: node?.carryCount() ?? 0});
+      useMessagesStore.getState().refresh(conversationId ?? undefined);
+    },
+
+    retryMessage: async (messageId: string) => {
+      const m = dbGetMessage(messageId);
+      if (!m || !m.isOutbound) return;
+      get().deleteMessage(messageId);
+      await get().sendToConversation(m.conversationId, {
+        kind: m.kind,
+        text: m.text || undefined,
+        media: m.media,
+      });
     },
 
     createGroup: (name: string, memberIds: string[]) => {

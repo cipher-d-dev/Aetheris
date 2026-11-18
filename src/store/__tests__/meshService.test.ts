@@ -34,7 +34,7 @@ import {useMeshService} from '../meshService';
 import {displayName, useMessagesStore} from '../messagesStore';
 import {addContactFromText} from '../../contacts/addContact';
 import {buildContactLink} from '../../contacts/contactLink';
-import {dbGetPeer, dbSetNickname} from '../../db/database';
+import {dbGetPeer, dbSetNickname, dbUpdateMessageStatus} from '../../db/database';
 import {MeshNode} from '../../mesh/meshNode';
 import {createRnCrypto} from '../../mesh/rnCrypto';
 import {MemoryStore} from '../../mesh/testing/simNetwork';
@@ -165,6 +165,28 @@ describe('meshService with a peer phone', () => {
     expect(displayName(bob.id, 'Bob')).toBe('Bobby (work)');
     dbSetNickname(bob.id, '');
     expect(displayName(bob.id)).toBe('Bob');
+  });
+
+  it('deleting an undelivered message stops its delivery; retry resends it', async () => {
+    const erin = await keypair(); // nowhere on the mesh: the message is carried
+    const svc = useMeshService.getState();
+    const before = svc.carrying;
+    const id = await svc.sendToConversation(erin.id, {kind: 'text', text: 'are you there?'});
+    await settle();
+    // Bob may hold a sprayed copy; our own copy is what we can cancel.
+    expect(useMeshService.getState().carrying).toBeGreaterThan(before);
+
+    useMeshService.getState().deleteMessage(id);
+    expect(dbGetConversation(erin.id).find(m => m.id === id)).toBeUndefined();
+    expect(useMeshService.getState().carrying).toBe(before);
+
+    const id2 = await svc.sendToConversation(erin.id, {kind: 'text', text: 'second try'});
+    dbUpdateMessageStatus(id2, 'failed');
+    await useMeshService.getState().retryMessage(id2);
+    const conv = dbGetConversation(erin.id);
+    expect(conv.map(m => m.text)).toEqual(['second try']);
+    expect(conv[0].id).not.toBe(id2);
+    expect(conv[0].status).not.toBe('failed'); // queued again (and sprayed to Bob)
   });
 
   it('marks routes down when the link drops', async () => {

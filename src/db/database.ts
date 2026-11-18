@@ -160,6 +160,19 @@ export function dbListConversations(): ConversationRow[] {
   }));
 }
 
+export function dbGetMessage(id: string): MessageRow | null {
+  const r = rows('SELECT * FROM messages WHERE id = ?', [id])[0];
+  return r ? rowToMessage(r) : null;
+}
+
+/** Delete one message on this phone. Returns group sub-IDs that were in flight. */
+export function dbDeleteMessage(id: string): string[] {
+  const subs = rows('SELECT sub_id FROM group_deliveries WHERE message_id = ?', [id]).map(r => r.sub_id);
+  run('DELETE FROM group_deliveries WHERE message_id = ?', [id]);
+  run('DELETE FROM messages WHERE id = ?', [id]);
+  return subs;
+}
+
 export function dbDeleteConversation(conversationId: string): void {
   run('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
 }
