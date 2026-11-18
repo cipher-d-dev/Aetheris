@@ -21,7 +21,7 @@
  */
 
 import {MeshMessage, MessageContent, MessageType} from '../types/message';
-import {AdvertEntry, RoutingTable} from './routingTable';
+import {AdvertEntry, evenSeq, routeOriginText, RoutingTable} from './routingTable';
 
 // ─── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +44,10 @@ export interface MeshConfig {
   relayRateLimitPerMin: number;
   /** Max routing entries we'll accept/advertise */
   maxRoutes: number;
+  /** Max messages held for other people (our own are never evicted) */
+  maxCarriedForOthers: number;
+  /** Max total size (bytes of JSON) of messages held for other people */
+  maxCarriedBytes: number;
 }
 
 export const DEFAULT_CONFIG: MeshConfig = {
@@ -56,6 +60,8 @@ export const DEFAULT_CONFIG: MeshConfig = {
   defaultTtl: 16,
   relayRateLimitPerMin: 120,
   maxRoutes: 256,
+  maxCarriedForOthers: 500,
+  maxCarriedBytes: 40 * 1024 * 1024,
 };
 
 // ─── Injected dependencies ────────────────────────────────────────────────────
@@ -165,6 +171,9 @@ export class MeshNode {
   private triggeredPending = false;
   private processingCarry = false;
   private carryDirty = false;
+  private carrySizes = new Map<string, number>();
+  private verifiedOrigins = new Set<string>();
+  private ownSig?: {seq: number; alias?: string; sig: string};
   alias?: string;
 
   constructor(
@@ -180,6 +189,7 @@ export class MeshNode {
     this.table = new RoutingTable(selfId, now, this.cfg.routeTimeoutMs);
     for (const rec of store.carryList()) {
       this.carry.set(rec.message.id, rec);
+      this.carrySizes.set(rec.message.id, JSON.stringify(rec.message).length);
     }
   }
 
@@ -193,7 +203,8 @@ export class MeshNode {
     return [...this.neighbours.entries()].map(([id, linkId]) => ({
       id,
       linkId,
-      alias: this.links.get(linkId)?.alias ?? this.table.get(id)?.alias,
+      // Prefer the signed alias from routing over the unsigned HELLO one.
+      alias: this.table.get(id)?.alias ?? this.links.get(linkId)?.alias,
     }));
   }
 
@@ -309,7 +320,11 @@ export class MeshNode {
 
   private async handleRoutes(fromId: string, entries: AdvertEntry[]) {
     if (!Array.isArray(entries)) return;
-    const changed = this.table.applyAdvert(fromId, entries.slice(0, this.cfg.maxRoutes));
+    const verified: AdvertEntry[] = [];
+    for (const e of entries.slice(0, this.cfg.maxRoutes)) {
+      if (await this.verifyOrigin(e)) verified.push(e);
+    }
+    const changed = this.table.applyAdvert(fromId, verified);
     if (changed) {
       this.events.onTopologyChanged?.();
       this.scheduleTriggeredAdvert();
@@ -317,10 +332,42 @@ export class MeshNode {
     }
   }
 
+  /**
+   * Only the destination itself can originate (sequence number, alias) for
+   * its own entry. Verified results are cached: each origination is checked
+   * once, not once per advert.
+   */
+  private async verifyOrigin(e: AdvertEntry): Promise<boolean> {
+    if (!e || typeof e.d !== 'string' || typeof e.s !== 'number' || typeof e.g !== 'string') {
+      return false;
+    }
+    if (e.a !== undefined && (typeof e.a !== 'string' || e.a.length > 32)) return false;
+    const key = `${e.d}|${evenSeq(e.s)}|${e.a ?? ''}|${e.g}`;
+    if (this.verifiedOrigins.has(key)) return true;
+    const ok = await this.crypto
+      .verifyText(routeOriginText(e.d, e.s, e.a), e.g, e.d)
+      .catch(() => false);
+    if (ok) {
+      if (this.verifiedOrigins.size > 4096) this.verifiedOrigins.clear();
+      this.verifiedOrigins.add(key);
+    }
+    return ok;
+  }
+
+  private async ownSignature(): Promise<string> {
+    const seq = this.table.ownSeqNumber;
+    if (!this.ownSig || this.ownSig.seq !== seq || this.ownSig.alias !== this.alias) {
+      const sig = await this.crypto.signText(routeOriginText(this.selfId, seq, this.alias));
+      this.ownSig = {seq, alias: this.alias, sig};
+    }
+    return this.ownSig.sig;
+  }
+
   private async sendRoutes(nodeId: string) {
     const linkId = this.neighbours.get(nodeId);
     if (!linkId) return;
-    const r = this.table.buildAdvert(nodeId, this.alias).slice(0, this.cfg.maxRoutes);
+    const sig = await this.ownSignature();
+    const r = this.table.buildAdvert(nodeId, {alias: this.alias, sig}).slice(0, this.cfg.maxRoutes);
     await this.sendFrame(linkId, {t: 'ROUTES', r});
   }
 
@@ -614,11 +661,33 @@ export class MeshNode {
 
   private putCarry(rec: CarryRecord) {
     this.carry.set(rec.message.id, rec);
+    this.carrySizes.set(rec.message.id, JSON.stringify(rec.message).length);
     this.store.carryPut(rec);
+    if (!rec.own) this.enforceCarryLimits(rec.message.id);
   }
 
   private removeCarry(id: string) {
+    this.carrySizes.delete(id);
     if (this.carry.delete(id)) this.store.carryRemove(id);
+  }
+
+  /** Evict the oldest messages we hold for others when over budget. */
+  private enforceCarryLimits(keepId: string) {
+    let count = 0;
+    let bytes = 0;
+    for (const [id, r] of this.carry) {
+      if (r.own) continue;
+      count++;
+      bytes += this.carrySizes.get(id) ?? 0;
+    }
+    for (const [id, r] of [...this.carry]) {
+      if (count <= this.cfg.maxCarriedForOthers && bytes <= this.cfg.maxCarriedBytes) break;
+      if (r.own || id === keepId) continue;
+      bytes -= this.carrySizes.get(id) ?? 0;
+      count--;
+      this.removeCarry(id);
+      this.log(`carry full: dropped ${id}`);
+    }
   }
 
   private log(msg: string) {
