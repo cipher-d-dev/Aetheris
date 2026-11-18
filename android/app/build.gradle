@@ -110,6 +110,11 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    // Mesh radio: BLE discovery + Wi-Fi links, managed by Google Play Services
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")
+    // Correct photo orientation before compressing
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {

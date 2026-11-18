@@ -1,103 +1,51 @@
-import React, { useEffect } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { initDatabase } from './src/db/database';
+import React, {useEffect} from 'react';
+import {AppState, StatusBar} from 'react-native';
+import {NavigationContainer} from '@react-navigation/native';
 import AppNavigator from './src/navigation/AppNavigator';
-import { useThemeStore } from './src/theme';
-import { useIdentityStore } from './src/store/identityStore';
-import { useMeshService } from './src/store/meshService';
-import { StatusBar, AppState, AppStateStatus } from 'react-native';
-import { check, request, PERMISSIONS, RESULTS } from 'react-native-permissions';
-import { Platform } from 'react-native';
+import {initDatabase} from './src/db/database';
+import {useThemeStore} from './src/theme';
+import {useIdentityStore} from './src/store/identityStore';
+import {useMeshService} from './src/store/meshService';
+import {useMessagesStore} from './src/store/messagesStore';
 
 export default function App() {
-  const { isDark, theme: t } = useThemeStore();
-  const { identity, initialize: initializeIdentity } = useIdentityStore();
-  const { isRunning, start: startMesh, stop: stopMesh } = useMeshService();
+  const {isDark, theme: t} = useThemeStore();
+  const identity = useIdentityStore(s => s.identity);
+  const initializeIdentity = useIdentityStore(s => s.initialize);
+  const bootstrap = useMeshService(s => s.bootstrap);
 
-  // Request required Bluetooth and location permissions
-  const requestPermissions = async (): Promise<boolean> => {
-    if (Platform.OS !== 'android') return true;
-
-    const requiredPermissions = [
-      PERMISSIONS.ANDROID.BLUETOOTH_SCAN,
-      PERMISSIONS.ANDROID.BLUETOOTH_ADVERTISE,
-      PERMISSIONS.ANDROID.BLUETOOTH_CONNECT,
-      PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
-    ];
-
-    for (const permission of requiredPermissions) {
-      const status = await check(permission);
-      if (status !== RESULTS.GRANTED) {
-        const requested = await request(permission);
-        if (requested !== RESULTS.GRANTED) {
-          console.warn(`[App] Permission ${permission} denied`);
-          return false;
-        }
-      }
-    }
-    return true;
-  };
-
-  // Initialize database and identity on app start
+  // 1. Database + identity
   useEffect(() => {
-    const setupApp = async () => {
+    (async () => {
       try {
-        // Request permissions first
-        const permissionsGranted = await requestPermissions();
-        if (!permissionsGranted) {
-          console.warn('[App] Some permissions were denied - app may not work correctly');
-        }
-
-        // Initialize database
         await initDatabase();
-        
-        // Initialize identity
         await initializeIdentity();
+        useMessagesStore.getState().loadConversations();
       } catch (e) {
-        console.error('[App] Setup failed:', e);
+        console.error('[App] setup failed', e);
       }
-    };
-    setupApp();
-  }, []);
+    })();
+  }, [initializeIdentity]);
 
-  // Initialize mesh service once identity is ready
+  // 2. Mesh. It keeps running in the background via a foreground service.
   useEffect(() => {
-    if (identity && !isRunning) {
-      startMesh(identity.publicKeyBase58, identity.publicKeyBase58).catch(e => {
-        console.error('[App] Mesh start failed:', e);
-      });
-    }
-  }, [identity, isRunning]);
+    if (identity) bootstrap(identity.publicKeyBase58);
+  }, [identity, bootstrap]);
 
+  // 3. Coming back to the app: retry if permissions/Bluetooth were missing.
   useEffect(() => {
-    return () => {
-      stopMesh();
-    };
-  }, [stopMesh]);
-
-  // Handle app lifecycle (pause/resume)
-  // Removed pausing mesh in background, as it runs via Foreground Service now.
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
-    return () => {
-      subscription.remove();
-    };
-  }, [isRunning]);
-
-  const handleAppStateChange = async (state: AppStateStatus) => {
-    if (state === 'active' && identity && !isRunning) {
-      // App came to foreground, restart mesh
-      console.log('[App] Resuming mesh');
-      await startMesh(identity.publicKeyBase58, identity.publicKeyBase58);
-    }
-  };
+    const sub = AppState.addEventListener('change', state => {
+      const mesh = useMeshService.getState();
+      if (state === 'active' && identity && mesh.status !== 'running') {
+        mesh.bootstrap(identity.publicKeyBase58);
+      }
+    });
+    return () => sub.remove();
+  }, [identity]);
 
   return (
     <NavigationContainer>
-      <StatusBar
-        barStyle={isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={t.bg}
-      />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={t.bg} />
       <AppNavigator />
     </NavigationContainer>
   );

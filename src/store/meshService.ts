@@ -1,575 +1,457 @@
 /**
  * meshService.ts
  *
- * Central orchestrator for the Aetheris mesh network.
+ * Glue between the radio (Kotlin / Nearby Connections), the mesh brain
+ * (src/mesh/meshNode.ts), SQLite and the UI.
  *
- * Responsibilities:
- * 1. Send pipeline: encrypt message → sign → serialize → transmit via Wi-Fi Direct
- * 2. Receive pipeline: deserialize → verify signature → decrypt if for us OR relay
- * 3. Connection management: track peers, manage Wi-Fi Direct lifecycle
- * 4. Event emission: notify UI of incoming messages, delivery status, connection changes
+ *   radio link up / frame / link down ──▶ MeshNode ──▶ deliver / ack / sent
+ *                                                         │
+ *                                     SQLite + messagesStore ◀┘
  */
-
 import {create} from 'zustand';
-import {MeshMessage} from '../types/message';
-import {
-  AetherisBridge,
-  MessageReceivedEvent,
-  ConnectionStateEvent,
-} from '../native/AetherisBridge';
-import {
-  buildAck,
-  buildMessage,
-  openMessage,
-  serializeMessage,
-  deserializeMessage,
-} from '../crypto/messageBuilder';
-import {verifySignature} from '../crypto/signing';
+import {AppState, EmitterSubscription} from 'react-native';
+import {AetherisBridge} from '../native/AetherisBridge';
+import {MeshConfig, MeshNode} from '../mesh/meshNode';
+import {createRnCrypto} from '../mesh/rnCrypto';
 import {loadPrivateKey} from '../crypto/identity';
 import {
-  decideMessageFate,
-  prepareForRelay,
-  selectRelayPeers,
-} from './messageRelay';
-import {dbInsertMessage} from '../db/database';
-import {getPendingOutboundMessages} from '../db/messages';
-import {useMessagesStore} from './messagesStore';
-import {Buffer} from 'buffer';
+  dbGetGroup,
+  dbGetMessageConversation,
+  dbGetMessageStatus,
+  dbGetSetting,
+  dbGroupParent,
+  dbInsertMessage,
+  dbMarkGroupDelivered,
+  dbMeshStore,
+  dbSetSetting,
+  dbUpdateMessageStatus,
+  dbUpsertGroup,
+  dbUpsertPeer,
+  dbAddGroupDelivery,
+} from '../db/database';
+import {
+  displayName,
+  GROUP_PREFIX,
+  groupIdOf,
+  isGroupConversation,
+  useMessagesStore,
+} from './messagesStore';
+import {ContentKind, GroupInfo, MediaAttachment, MessageContent, MeshMessage} from '../types/message';
+import {uuid} from '../utils/uuid';
+import {
+  checkRadioPermissions,
+  RadioPermissionState,
+  requestRadioPermissions,
+} from '../native/permissions';
 
-import sodium from 'react-native-sodium';
-import {base58ToBase64} from '../crypto/encoding';
+// ─── Power profiles (battery tuning) ──────────────────────────────────────────
+//
+// Discovery scanning is the main battery cost. Once we have neighbours we
+// mostly need to notice *new* phones, so we scan in short bursts. Advertising
+// stays on so others can always find us. Routing adverts slow down too.
 
-interface ConnectedPeer {
+export type PowerMode = 'performance' | 'balanced' | 'saver';
+
+interface PowerProfile {
+  label: string;
+  description: string;
+  tickMs: number;
+  /** [scanOnMs, restMs] when we have no neighbours. [0,0] = continuous. */
+  dutyAlone: [number, number];
+  /** [scanOnMs, restMs] when we have at least one neighbour. */
+  dutyLinked: [number, number];
+  mesh: Partial<MeshConfig>;
+}
+
+export const POWER_PROFILES: Record<PowerMode, PowerProfile> = {
+  performance: {
+    label: 'Performance',
+    description: 'Scan non-stop. Fastest to find people, uses the most battery.',
+    tickMs: 2_000,
+    dutyAlone: [0, 0],
+    dutyLinked: [0, 0],
+    mesh: {advertIntervalMs: 10_000},
+  },
+  balanced: {
+    label: 'Balanced',
+    description: 'Scan non-stop when alone, in bursts once connected.',
+    tickMs: 3_000,
+    dutyAlone: [0, 0],
+    dutyLinked: [10_000, 30_000],
+    mesh: {advertIntervalMs: 15_000},
+  },
+  saver: {
+    label: 'Battery saver',
+    description: 'Short scans every minute. Slower to find people.',
+    tickMs: 5_000,
+    dutyAlone: [10_000, 30_000],
+    dutyLinked: [5_000, 55_000],
+    mesh: {advertIntervalMs: 30_000},
+  },
+};
+
+// Same everywhere so phones in different modes still agree on route lifetime.
+const ROUTE_TIMEOUT_MS = 100_000;
+
+/** Largest attachment we'll send (base64 chars). Every relay has to carry it. */
+export const MAX_MEDIA_BASE64 = 400_000;
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+export interface MeshPeer {
   id: string;
-  state: 'connecting' | 'connected' | 'disconnected' | 'failed' | 'authenticating' | 'authenticated';
-  challenge?: string;
+  alias?: string;
 }
 
-interface MeshServiceState {
-  // State
-  isRunning: boolean;
-  connectedPeers: Record<string, ConnectedPeer>;
-  pendingMessages: Record<string, {message: MeshMessage, retries: number, lastRetry: number, text?: string}>;
+export interface MeshRoute extends MeshPeer {
+  hops: number;
+  nextHop: string;
+}
 
-  // Methods
-  start: (nodeId: string, publicKeyBase58: string) => Promise<void>;
+export type MeshStatus = 'stopped' | 'starting' | 'running' | 'error';
+
+export interface OutgoingContent {
+  kind: ContentKind;
+  text?: string;
+  media?: MediaAttachment;
+}
+
+interface MeshState {
+  status: MeshStatus;
+  error?: string;
+  selfId?: string;
+  alias: string;
+  powerMode: PowerMode;
+  neighbours: MeshPeer[];
+  routes: MeshRoute[];
+  /** Aetheris phones seen by the radio (linked or not) */
+  nearbyCount: number;
+  /** Messages this phone is holding for others (or for later) */
+  carrying: number;
+  permission: RadioPermissionState | 'unknown';
+  bluetoothOn: boolean;
+
+  /** Ask for radio permissions (if needed) and start the mesh. */
+  bootstrap: (selfId: string) => Promise<void>;
+  start: (selfId: string) => Promise<void>;
   stop: () => Promise<void>;
-  sendMessage: (params: {
-    recipientId: string;
-    recipientPublicKeyBase64: string;
-    text: string;
-    messageId?: string;
-  }) => Promise<{messageId: string; handedOff: boolean}>;
-  retryPendingMessages: () => Promise<void>;
-  getConnectedPeerIds: () => string[];
-  isConnectedTo: (peerId: string) => boolean;
+  setAlias: (alias: string) => void;
+  setPowerMode: (mode: PowerMode) => void;
+  sendToConversation: (conversationId: string, content: OutgoingContent) => Promise<string>;
+  createGroup: (name: string, memberIds: string[]) => string;
 }
 
-// State references (closure)
-let ourNodeId = '';
-let ourPrivateKeyBase64 = '';
-let ourPublicKeyBase58 = '';
-let retryInterval: any = null;
+let node: MeshNode | null = null;
+let subs: EmitterSubscription[] = [];
+const nearbyEndpoints = new Set<string>();
+let lastLinked = -1;
 
-export const useMeshService = create<MeshServiceState>((set, get) => {
-  let messageReceivedListener: any = null;
-  let connectionStateListener: any = null;
+export const useMeshService = create<MeshState>((set, get) => {
+  const refreshTopology = () => {
+    if (!node) return;
+    const neighbours = node.getNeighbours().map(n => ({id: n.id, alias: n.alias}));
+    const routes = node.table.reachable().map(r => ({
+      id: r.dest,
+      alias: r.alias,
+      hops: r.hops,
+      nextHop: r.nextHop,
+    }));
+    for (const r of routes) {
+      try {
+        dbUpsertPeer(r.id, r.alias);
+      } catch {}
+    }
+    set({neighbours, routes, carrying: node.carryCount(), nearbyCount: nearbyEndpoints.size});
+    applyDutyCycle(false);
+  };
+
+  const applyDutyCycle = (force: boolean) => {
+    const linked = node ? node.getNeighbours().length : 0;
+    const bucket = linked > 0 ? 1 : 0;
+    if (!force && bucket === lastLinked) return;
+    lastLinked = bucket;
+    const p = POWER_PROFILES[get().powerMode];
+    const [on, off] = linked > 0 ? p.dutyLinked : p.dutyAlone;
+    AetherisBridge.setDiscoveryDutyCycle(on, off).catch(() => undefined);
+  };
+
+  // ─── Mesh events → DB/UI ────────────────────────────────────────────────
+
+  const onDeliver = (m: MeshMessage, content: MessageContent) => {
+    const self = get().selfId!;
+    const senderId = m.sender.id;
+    const alias = typeof content.alias === 'string' ? content.alias.slice(0, 32) : undefined;
+    dbUpsertPeer(senderId, alias);
+
+    let conversationId = senderId;
+    const g = content.group;
+    if (
+      g &&
+      typeof g.id === 'string' &&
+      typeof g.name === 'string' &&
+      Array.isArray(g.members) &&
+      g.members.includes(senderId) &&
+      g.members.includes(self)
+    ) {
+      const group: GroupInfo = {
+        id: g.id.slice(0, 64),
+        name: g.name.slice(0, 64),
+        members: g.members.filter(x => typeof x === 'string').slice(0, 64),
+      };
+      dbUpsertGroup(group);
+      conversationId = GROUP_PREFIX + group.id;
+    }
+
+    const kind: ContentKind =
+      content.kind === 'image' || content.kind === 'audio' ? content.kind : 'text';
+    const media =
+      kind !== 'text' &&
+      content.media &&
+      typeof content.media.data === 'string' &&
+      content.media.data.length <= MAX_MEDIA_BASE64 * 1.1
+        ? content.media
+        : undefined;
+    if (kind !== 'text' && !media) return; // malformed attachment
+
+    const store = useMessagesStore.getState();
+    const visible = store.activeConversation === conversationId && AppState.currentState === 'active';
+
+    dbInsertMessage({
+      id: m.id,
+      conversationId,
+      senderId,
+      recipientId: self,
+      senderAlias: alias,
+      kind,
+      text: typeof content.text === 'string' ? content.text.slice(0, 4000) : '',
+      media,
+      status: 'delivered',
+      isOutbound: false,
+      route: m.routing.hops,
+      createdAt: Math.min(m.routing.originTimestamp, Date.now()),
+      expiresAt: m.routing.expiresAt,
+      read: visible,
+    });
+    store.refresh(conversationId);
+
+    if (!visible) {
+      const who = displayName(senderId, alias);
+      const title = isGroupConversation(conversationId)
+        ? `${who} · ${dbGetGroup(groupIdOf(conversationId))?.name ?? 'Group'}`
+        : who;
+      const body = kind === 'image' ? '📷 Photo' : kind === 'audio' ? '🎤 Voice note' : content.text ?? '';
+      AetherisBridge.showMessageNotification(title, body).catch(() => undefined);
+    }
+  };
+
+  const setStatusFor = (messageId: string, status: 'sent' | 'delivered' | 'failed', route?: string[]) => {
+    const current = dbGetMessageStatus(messageId);
+    if (!current) return;
+    if (current === 'delivered') return;
+    if (status === 'sent' && current !== 'pending') return;
+    dbUpdateMessageStatus(messageId, status, route);
+    useMessagesStore.getState().refresh(dbGetMessageConversation(messageId) ?? undefined);
+  };
+
+  const onAck = (id: string, path: string[]) => {
+    const parent = dbGroupParent(id);
+    if (parent) {
+      const {delivered, total} = dbMarkGroupDelivered(id);
+      if (delivered >= total) setStatusFor(parent, 'delivered');
+      else {
+        setStatusFor(parent, 'sent');
+        useMessagesStore.getState().refresh(dbGetMessageConversation(parent) ?? undefined);
+      }
+      return;
+    }
+    setStatusFor(id, 'delivered', path);
+  };
+
+  const onSent = (id: string) => setStatusFor(dbGroupParent(id) ?? id, 'sent');
+
+  const onExpired = (id: string) => {
+    const parent = dbGroupParent(id);
+    if (!parent) setStatusFor(id, 'failed');
+  };
 
   return {
-    isRunning: false,
-    connectedPeers: {},
-    pendingMessages: {},
+    status: 'stopped',
+    alias: '',
+    powerMode: 'balanced',
+    neighbours: [],
+    routes: [],
+    nearbyCount: 0,
+    carrying: 0,
+    permission: 'unknown',
+    bluetoothOn: true,
 
-    // ─── Lifecycle ────────────────────────────────────────────────────────────
+    bootstrap: async (selfId: string) => {
+      let permission = await checkRadioPermissions().catch(() => 'denied' as const);
+      if (permission !== 'granted') {
+        permission = await requestRadioPermissions().catch(() => 'denied' as const);
+      }
+      const bluetoothOn = await AetherisBridge.isBluetoothEnabled().catch(() => true);
+      set({permission, bluetoothOn});
+      if (permission === 'granted') await get().start(selfId);
+    },
 
-    start: async (nodeId: string, publicKeyBase58: string) => {
+    start: async (selfId: string) => {
+      if (node && get().status === 'running') return;
+      set({status: 'starting', error: undefined, selfId});
       try {
-        ourNodeId = nodeId;
-        ourPublicKeyBase58 = publicKeyBase58;
-        
-        // Load private key - must succeed
-        try {
-          ourPrivateKeyBase64 = await loadPrivateKey();
-        } catch (e) {
-          console.error('[meshService] Failed to load private key:', e);
-          throw new Error('Could not load private key from secure storage');
-        }
+        const alias = dbGetSetting('alias') ?? '';
+        const powerMode = (dbGetSetting('powerMode') as PowerMode) || 'balanced';
+        set({alias, powerMode});
+        const profile = POWER_PROFILES[powerMode] ?? POWER_PROFILES.balanced;
 
-        // Start native discovery (BLE + Wi-Fi Direct)
-        await AetherisBridge.startDiscovery(nodeId);
-
-        // Register event listeners
-        messageReceivedListener = AetherisBridge.onMessageReceived(
-          (event: MessageReceivedEvent) => {
-            handleMessageReceived(event, get, set);
+        const privateKey = await loadPrivateKey();
+        node = new MeshNode(
+          selfId,
+          {
+            send: (linkId, data) => AetherisBridge.sendFrame(linkId, data),
+            disconnect: linkId => void AetherisBridge.disconnect(linkId).catch(() => undefined),
           },
-        );
-
-        connectionStateListener = AetherisBridge.onConnectionStateChanged(
-          async (event: ConnectionStateEvent) => {
-            if (event.state === 'connected') {
-              // Transition to authenticating and send challenge
-              set(state => ({
-                connectedPeers: {
-                  ...state.connectedPeers,
-                  [event.peerId]: {
-                    id: event.peerId,
-                    state: 'authenticating',
-                    challenge: '',
-                  },
-                },
-              }));
-              
-              try {
-                const challengeBase64 = await sodium.randombytes_buf(32);
-                
-                set(state => ({
-                  connectedPeers: {
-                    ...state.connectedPeers,
-                    [event.peerId]: {
-                      ...state.connectedPeers[event.peerId],
-                      challenge: challengeBase64,
-                    },
-                  },
-                }));
-
-                const recipientPublicKeyBase64 = base58ToBase64(event.peerId);
-                const message = await buildMessage(
-                  ourPublicKeyBase58,
-                  undefined,
-                  event.peerId,
-                  recipientPublicKeyBase64,
-                  {text: challengeBase64},
-                  'HANDSHAKE_CHALLENGE',
-                );
-
-                const serialized = serializeMessage(message);
-                const base64Data = Buffer.from(serialized, 'utf8').toString('base64');
-                await AetherisBridge.sendRawBytes(event.peerId, base64Data);
-                console.log(`[meshService] Sent handshake challenge to ${event.peerId}`);
-              } catch (e) {
-                console.error(`[meshService] Handshake failed for ${event.peerId}`, e);
-                AetherisBridge.disconnectFromPeer(event.peerId);
-              }
-            } else {
-              set(state => ({
-                connectedPeers: {
-                  ...state.connectedPeers,
-                  [event.peerId]: {
-                    ...state.connectedPeers[event.peerId],
-                    id: event.peerId,
-                    state: event.state as any,
-                  },
-                },
-              }));
-            }
-            console.log(
-              `[meshService] Peer ${event.peerId} state: ${event.state}`,
-            );
+          createRnCrypto(selfId, privateKey),
+          dbMeshStore,
+          {
+            onDeliver,
+            onAck,
+            onSent,
+            onExpired,
+            onTopologyChanged: refreshTopology,
+            log: msg => console.log(msg),
           },
+          {...profile.mesh, routeTimeoutMs: ROUTE_TIMEOUT_MS},
         );
+        node.alias = alias || undefined;
 
-        // Load pending outbound messages from DB
-        const pendingFromDb = getPendingOutboundMessages();
-        const pendingMap: MeshServiceState['pendingMessages'] = {};
-        for (const msg of pendingFromDb) {
-          if (!msg.serializedMessage) continue;
-          const messageObj = deserializeMessage(msg.serializedMessage);
-          if (!messageObj) continue;
-          pendingMap[msg.id] = {
-            message: messageObj,
-            retries: 0,
-            lastRetry: 0,
-            text: msg.text,
-          };
-        }
-        set({pendingMessages: pendingMap});
+        subs.forEach(s => s.remove());
+        subs = [
+          AetherisBridge.onPeerFound(e => {
+            nearbyEndpoints.add(e.endpointId);
+            set({nearbyCount: nearbyEndpoints.size});
+          }),
+          AetherisBridge.onPeerLost(e => {
+            nearbyEndpoints.delete(e.endpointId);
+            set({nearbyCount: nearbyEndpoints.size});
+          }),
+          AetherisBridge.onLinkUp(e => void node?.onLinkUp(e.linkId)),
+          AetherisBridge.onLinkDown(e => node?.onLinkDown(e.linkId)),
+          AetherisBridge.onFrame(e => void node?.onFrame(e.linkId, e.data)),
+          AetherisBridge.onTick(() => {
+            if (!node) return;
+            node.tick().then(() => set({carrying: node?.carryCount() ?? 0}));
+          }),
+          AetherisBridge.onRadioError(e => {
+            console.warn('[meshService] radio error', e.code, e.message);
+            set({error: e.message});
+          }),
+        ];
 
-        retryInterval = setInterval(() => {
-          get().retryPendingMessages();
-        }, 10000); // Retry every 10 seconds
-
-        set({isRunning: true});
-        console.log('[meshService] Started successfully');
-      } catch (e) {
-        console.error('[meshService] Start failed:', e);
-        throw e;
+        await AetherisBridge.start(selfId);
+        await AetherisBridge.setTickInterval(profile.tickMs);
+        lastLinked = -1;
+        applyDutyCycle(true);
+        set({status: 'running', carrying: node.carryCount()});
+      } catch (e: any) {
+        console.error('[meshService] start failed', e);
+        set({status: 'error', error: e?.message ?? String(e)});
       }
     },
 
     stop: async () => {
-      try {
-        await AetherisBridge.stopDiscovery();
-        messageReceivedListener?.remove();
-        connectionStateListener?.remove();
-        if (retryInterval) {
-          clearInterval(retryInterval);
-          retryInterval = null;
-        }
-        set({isRunning: false, connectedPeers: {}});
-        console.log('[meshService] Stopped');
-      } catch (e) {
-        console.error('[meshService] Stop failed:', e);
+      subs.forEach(s => s.remove());
+      subs = [];
+      nearbyEndpoints.clear();
+      node = null;
+      await AetherisBridge.stop().catch(() => undefined);
+      set({status: 'stopped', neighbours: [], routes: [], nearbyCount: 0});
+    },
+
+    setAlias: (alias: string) => {
+      const clean = alias.trim().slice(0, 32);
+      dbSetSetting('alias', clean);
+      set({alias: clean});
+      if (node) node.alias = clean || undefined;
+    },
+
+    setPowerMode: (mode: PowerMode) => {
+      dbSetSetting('powerMode', mode);
+      set({powerMode: mode});
+      const p = POWER_PROFILES[mode];
+      node?.setConfig(p.mesh);
+      if (get().status === 'running') {
+        AetherisBridge.setTickInterval(p.tickMs).catch(() => undefined);
+        applyDutyCycle(true);
       }
     },
 
-    retryPendingMessages: async () => {
-      const state = get();
-      const connectedPeerIds = state.getConnectedPeerIds();
-      if (connectedPeerIds.length === 0) return;
-
-      const now = Date.now();
-      const updatedPending = { ...state.pendingMessages };
-      let updated = false;
-
-      for (const [id, pending] of Object.entries(updatedPending)) {
-        if (now - pending.lastRetry > 5000) {
-          console.log(`[meshService] Retrying message ${id}`);
-          const base64Data = Buffer.from(serializeMessage(pending.message), 'utf8').toString('base64');
-          let success = false;
-          
-          for (const peerId of connectedPeerIds) {
-            try {
-              await AetherisBridge.sendRawBytes(peerId, base64Data);
-              success = true;
-            } catch (e) {
-              console.warn(`[meshService] Retry to ${peerId} failed:`, e);
-            }
-          }
-
-          if (success) {
-            useMessagesStore.getState().updateStatus(id, 'sent');
-            delete updatedPending[id];
-            updated = true;
-          } else {
-            pending.retries += 1;
-            pending.lastRetry = now;
-            updated = true;
-          }
-        }
+    sendToConversation: async (conversationId, content) => {
+      const self = get().selfId;
+      if (!node || !self) throw new Error('Mesh is not running yet');
+      if (content.media && content.media.data.length > MAX_MEDIA_BASE64) {
+        throw new Error('Attachment is too large for the mesh');
       }
+      const id = uuid();
+      const alias = get().alias || undefined;
+      const base: MessageContent = {
+        kind: content.kind,
+        ...(content.text ? {text: content.text} : {}),
+        ...(content.media ? {media: content.media} : {}),
+        ...(alias ? {alias} : {}),
+      };
 
-      if (updated) {
-        set({ pendingMessages: updatedPending });
-      }
-    },
+      const isGroup = isGroupConversation(conversationId);
+      const group = isGroup ? dbGetGroup(groupIdOf(conversationId)) : null;
+      if (isGroup && !group) throw new Error('Unknown group');
+      const recipients = group ? group.members.filter(mId => mId !== self) : [conversationId];
+      if (recipients.length === 0) throw new Error('Nobody to send to');
+      if (!group && conversationId === self) throw new Error("You can't message yourself");
 
-    // ─── Send Pipeline ────────────────────────────────────────────────────────
+      dbInsertMessage({
+        id,
+        conversationId,
+        senderId: self,
+        recipientId: group ? conversationId : conversationId,
+        kind: content.kind,
+        text: content.text ?? '',
+        media: content.media,
+        status: 'pending',
+        isOutbound: true,
+        createdAt: Date.now(),
+      });
+      useMessagesStore.getState().refresh(conversationId);
 
-    sendMessage: async (params: {
-      recipientId: string;
-      recipientPublicKeyBase64: string;
-      text: string;
-      messageId?: string;
-    }) => {
       try {
-        const {recipientId, recipientPublicKeyBase64, text, messageId} = params;
-
-        // 1. Build message (encrypt + sign)
-        const message = await buildMessage(
-          ourPublicKeyBase58,
-          undefined, // no alias
-          recipientId,
-          recipientPublicKeyBase64,
-          {text},
-          'MSG',
-          messageId,
-        );
-
-        // 2. Serialize to JSON
-        const serialized = serializeMessage(message);
-        const base64Data = Buffer.from(serialized, 'utf8').toString('base64');
-
-        // 3. Store in DB
-        dbInsertMessage({
-          id: message.id,
-          sender_id: message.sender.id,
-          recipient_id: message.recipient.id,
-          encrypted_payload: message.payload.encrypted,
-          serialized_message: serialized,
-          nonce: message.payload.nonce,
-          ephemeral_public_key: message.payload.ephemeralPublicKey,
-          signature: message.signature,
-          is_outbound: 1,
-          ttl: message.routing.ttl,
-          expires_at: message.routing.expiresAt,
-          text: text,
-        });
-
-        // 4. Send to the recipient directly when possible; otherwise use the
-        // bounded Spray-and-Wait fan-out.
-        const connectedPeerIds = get().getConnectedPeerIds();
-        const sendPeerIds = connectedPeerIds.includes(recipientId)
-          ? [recipientId]
-          : selectRelayPeers(connectedPeerIds, 2);
-        console.log(
-          `[meshService] Sending message ${message.id} to ${sendPeerIds.length} peer(s)`,
-        );
-
-        let success = false;
-        for (const peerId of sendPeerIds) {
-          try {
-            await AetherisBridge.sendRawBytes(peerId, base64Data);
-            success = true;
-          } catch (e) {
-            console.warn(`[meshService] Send to ${peerId} failed:`, e);
+        if (group) {
+          for (const member of recipients) {
+            const subId = uuid();
+            dbAddGroupDelivery(subId, id, member);
+            await node.send({
+              id: subId,
+              recipientId: member,
+              content: {...base, group, groupMessageId: id},
+            });
           }
-        }
-
-        const messagesStore = useMessagesStore.getState();
-        if (success) {
-          messagesStore.updateStatus(message.id, 'sent');
         } else {
-          // Keep as pending and add to retry queue
-          set(state => ({
-            pendingMessages: {
-              ...state.pendingMessages,
-              [message.id]: { message, retries: 0, lastRetry: Date.now(), text }
-            }
-          }));
+          await node.send({id, recipientId: conversationId, content: base});
         }
-        return {messageId: message.id, handedOff: success};
       } catch (e) {
-        console.error('[meshService] Send failed:', e);
+        dbUpdateMessageStatus(id, 'failed');
+        useMessagesStore.getState().refresh(conversationId);
         throw e;
       }
+      set({carrying: node.carryCount()});
+      return id;
     },
 
-    // ─── Peer Queries ─────────────────────────────────────────────────────────
-
-    getConnectedPeerIds: () => {
-      return Object.values(get().connectedPeers)
-        .filter(p => p.state === 'authenticated')
-        .map(p => p.id);
-    },
-
-    isConnectedTo: (peerId: string) => {
-      const peer = get().connectedPeers[peerId];
-      return peer?.state === 'authenticated';
+    createGroup: (name: string, memberIds: string[]) => {
+      const self = get().selfId;
+      if (!self) throw new Error('Identity not ready');
+      const members = Array.from(new Set([self, ...memberIds]));
+      const group: GroupInfo = {id: uuid(), name: name.trim().slice(0, 64) || 'Group', members};
+      dbUpsertGroup(group);
+      return GROUP_PREFIX + group.id;
     },
   };
 });
-
-// ─── Receive Pipeline ─────────────────────────────────────────────────────────
-
-async function handleMessageReceived(
-  event: MessageReceivedEvent,
-  get: any,
-  set: any,
-) {
-  try {
-    const {peerId, data: base64Data} = event;
-
-    // 1. Decode from Base64
-    const serialized = Buffer.from(base64Data, 'base64').toString('utf8');
-
-    // 2. Deserialize from JSON
-    const message = deserializeMessage(serialized);
-    if (!message) {
-      console.warn('[meshService] Deserialization failed');
-      return;
-    }
-
-    console.log(`[meshService] Received message ${message.id} from ${peerId}`);
-
-    // Relays must reject forged messages before they enter the seen cache or
-    // consume routing capacity.
-    if (!(await verifySignature(message))) {
-      console.warn(`[meshService] Rejecting message with invalid signature: ${message.id}`);
-      return;
-    }
-
-    // 3. Decide: deliver, relay, or drop
-    const connectedPeerIds = get().getConnectedPeerIds();
-    const decision = decideMessageFate(message, ourNodeId, connectedPeerIds);
-
-    console.log(`[meshService] Decision: ${decision.reason}`);
-
-    // Handle handshake messages specifically
-    if (message.type === 'HANDSHAKE_CHALLENGE' && decision.shouldDeliver) {
-      try {
-        const content = await openMessage(message, ourPrivateKeyBase64);
-        const challenge = (content as {text?: string}).text;
-        if (challenge) {
-          const signature = await sodium.crypto_sign_detached(
-            challenge,
-            ourPrivateKeyBase64
-          );
-          const recipientPublicKeyBase64 = base58ToBase64(message.sender.id);
-          const responseMsg = await buildMessage(
-            ourPublicKeyBase58,
-            undefined,
-            message.sender.id,
-            recipientPublicKeyBase64,
-            {text: signature},
-            'HANDSHAKE_RESPONSE',
-          );
-          const serialized = serializeMessage(responseMsg);
-          const base64Data = Buffer.from(serialized, 'utf8').toString('base64');
-          await AetherisBridge.sendRawBytes(message.sender.id, base64Data);
-          console.log(`[meshService] Sent handshake response to ${message.sender.id}`);
-        }
-      } catch (e) {
-         console.warn('Failed to process challenge', e);
-      }
-      return;
-    }
-
-    if (message.type === 'HANDSHAKE_RESPONSE' && decision.shouldDeliver) {
-      try {
-        const content = await openMessage(message, ourPrivateKeyBase64);
-        const signature = (content as {text?: string}).text;
-        const peerRecord = get().connectedPeers[message.sender.id];
-        
-        if (peerRecord && peerRecord.challenge && signature) {
-          const senderPublicKeyBase64 = base58ToBase64(message.sender.id);
-          const isValid = await sodium.crypto_sign_verify_detached(
-            signature,
-            peerRecord.challenge,
-            senderPublicKeyBase64
-          );
-          
-          if (isValid) {
-             set((state: MeshServiceState) => ({
-               connectedPeers: {
-                 ...state.connectedPeers,
-                 [message.sender.id]: {
-                   ...state.connectedPeers[message.sender.id],
-                   state: 'authenticated'
-                 }
-               }
-             }));
-             console.log(`[meshService] Peer ${message.sender.id} authenticated!`);
-             setTimeout(() => get().retryPendingMessages(), 500);
-          } else {
-             console.error(`[meshService] Handshake failed: invalid signature from ${message.sender.id}`);
-             AetherisBridge.disconnectFromPeer(message.sender.id);
-          }
-        }
-      } catch (e) {
-         console.warn('Failed to process handshake response', e);
-      }
-      return;
-    }
-
-    // 4. If for us, decrypt and deliver
-    if (decision.shouldDeliver) {
-      try {
-        const privateKey = ourPrivateKeyBase64;
-        const content = await openMessage(message, privateKey);
-
-        if (content) {
-          if (message.type === 'ACK') {
-            const ackedMessageId = content.ackedMessageId;
-            if (ackedMessageId) {
-              useMessagesStore.getState().updateStatus(ackedMessageId, 'delivered');
-              console.log(`[meshService] Delivery ACK received for ${ackedMessageId}`);
-            } else {
-              console.warn(`[meshService] ACK ${message.id} had no acknowledged message ID`);
-            }
-            return;
-          }
-
-          const textContent = (content as {text?: string}).text || '';
-
-          // Store in DB with FULL encrypted payload and text
-          dbInsertMessage({
-            id: message.id,
-            sender_id: message.sender.id,
-            recipient_id: message.recipient.id,
-            encrypted_payload: message.payload.encrypted,
-            nonce: message.payload.nonce,
-            ephemeral_public_key: message.payload.ephemeralPublicKey,
-            signature: message.signature,
-            is_outbound: 0,
-            ttl: message.routing.ttl,
-            expires_at: message.routing.expiresAt,
-            text: textContent,
-          });
-
-          // Update messages store with decrypted text for UI display
-          const messagesStore = useMessagesStore.getState();
-          messagesStore.receiveMessage({
-            id: message.id,
-            senderId: message.sender.id,
-            recipientId: message.recipient.id,
-            text: textContent,
-            status: 'delivered',
-            isOutbound: false,
-            createdAt: message.routing.originTimestamp,
-          });
-
-          console.log(`[meshService] Message delivered to UI`);
-
-          // ACKs are ordinary mesh messages, so an intermediary can relay
-          // them when the original sender is no longer directly reachable.
-          try {
-            const ack = await buildAck(
-              ourPublicKeyBase58,
-              message.sender.id,
-              base58ToBase64(message.sender.id),
-              message.id,
-            );
-            const ackData = Buffer.from(
-              serializeMessage(ack),
-              'utf8',
-            ).toString('base64');
-            const ackPeers = connectedPeerIds.includes(peerId)
-              ? [peerId]
-              : selectRelayPeers(connectedPeerIds, 2, peerId);
-
-            for (const ackPeerId of ackPeers) {
-              await AetherisBridge.sendRawBytes(ackPeerId, ackData);
-            }
-          } catch (e) {
-            console.warn(`[meshService] Failed to send ACK for ${message.id}:`, e);
-          }
-        } else {
-          console.warn('[meshService] Decryption returned null - cannot parse content');
-        }
-      } catch (e) {
-        console.warn('[meshService] Decryption failed:', e);
-        // Store error state so we can show user
-        dbInsertMessage({
-          id: message.id,
-          sender_id: message.sender.id,
-          recipient_id: message.recipient.id,
-          encrypted_payload: message.payload.encrypted,
-          nonce: message.payload.nonce,
-          ephemeral_public_key: message.payload.ephemeralPublicKey,
-          signature: message.signature,
-          is_outbound: 0,
-          ttl: message.routing.ttl,
-          expires_at: message.routing.expiresAt,
-        });
-      }
-    }
-
-    // 5. If should relay, forward to next hops
-    if (decision.shouldRelay && decision.nextHops) {
-      try {
-        const relayMessage = prepareForRelay(message, ourNodeId);
-        const relaySerialized = serializeMessage(relayMessage);
-        const relayBase64 = Buffer.from(relaySerialized, 'utf8').toString(
-          'base64',
-        );
-
-        console.log(
-          `[meshService] Relaying message to ${decision.nextHops.length} peer(s)`,
-        );
-
-        for (const nextPeerId of decision.nextHops) {
-          try {
-            await AetherisBridge.sendRawBytes(nextPeerId, relayBase64);
-          } catch (e) {
-            console.warn(`[meshService] Relay to ${nextPeerId} failed:`, e);
-          }
-        }
-      } catch (e) {
-        console.error('[meshService] Relay failed:', e);
-      }
-    }
-  } catch (e) {
-    console.error('[meshService] Receive handler crashed:', e);
-  }
-}
