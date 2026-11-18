@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Switch, TouchableOpacity, TextInput } from 'react-native';
 import { POWER_PROFILES, PowerMode, useMeshService } from '../store/meshService';
+import DiagnosticsModal from '../components/DiagnosticsModal';
 import Icon from 'react-native-vector-icons/Feather';
 import { useThemeStore, Font } from '../theme';
 import { useIdentityStore } from '../store/identityStore';
@@ -56,6 +57,7 @@ export default function SettingsScreen() {
     const { identity } = useIdentityStore();
     const { alias, setAlias, powerMode, setPowerMode, status, neighbours, routes, carrying } = useMeshService();
     const [aliasDraft, setAliasDraft] = useState(alias);
+    const [showDiagnostics, setShowDiagnostics] = useState(false);
     useEffect(() => setAliasDraft(alias), [alias]);
 
     return (
@@ -146,6 +148,14 @@ export default function SettingsScreen() {
                 }
                 right={<View />}
             />
+
+            <SettingRow
+                icon="terminal"
+                label="Diagnostics"
+                sublabel="Live routing table and event log — share it when reporting a problem"
+                onPress={() => setShowDiagnostics(true)}
+            />
+            <DiagnosticsModal visible={showDiagnostics} onClose={() => setShowDiagnostics(false)} />
 
             {/* About */}
             <SectionLabel label="ABOUT" />
