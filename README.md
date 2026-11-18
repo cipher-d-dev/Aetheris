@@ -1,114 +1,74 @@
-# 🛰️ Aetheris
+# Aetheris
 
-**Aetheris** is a decentralized, serverless communication node designed to function in environments where traditional internet infrastructure is unreliable, censored, or non-existent.
+**Offline messaging that hops from phone to phone.**
 
-By turning every mobile device into a relay node, Aetheris creates a resilient peer-to-peer mesh network that uses **Store-Carry-Forward (SCF)** logic to move messages across physical space.
+No internet, no cell signal, no servers, no accounts. Every phone running Aetheris is also a relay: your message jumps across nearby phones until it reaches the person you sent it to, by the shortest path available.
 
----
+## How it works
 
-## 🚀 The Vision
+1. **Finding people.** Phones find each other over Bluetooth and connect automatically. When it can, the link upgrades itself to Wi‑Fi for speed. This uses Google's Nearby Connections, so it needs no internet.
+2. **Finding the route.** Every few seconds each phone tells its neighbours who it can reach and in how many hops. From that, every phone works out the next hop on the **shortest path** to everyone in the mesh. If a phone walks away, the routes heal around it.
+3. **When there's no route yet.** The message waits on your phone, and a few copies are handed to people you meet. It's delivered when a route appears or when someone carrying it walks into range of the recipient.
+4. **Privacy.** Messages are end-to-end encrypted. The phones relaying them can't read them. Your identity is a key pair stored on your device; there's no phone number or email.
 
-Aetheris isn't just a chat app; it’s an exploration of **Sovereign Connectivity**.
+You get a delivery receipt (double tick ✓✓) when the message arrives. Long-press a message to see the route it took.
 
-* **No Servers:** No central authority to shutdown or monitor traffic.
-* **No Accounts:** Your identity is tied to cryptographic hardware, not an email or phone number.
-* **Infrastructure-less:** Communicates via Bluetooth Low Energy (BLE) and Wi-Fi Direct.
+## Features
 
----
+- 1:1 and group chats
+- Photos (auto-compressed) and voice notes
+- Sent / delivered ticks, plus the route each message took
+- **Mesh** tab showing who's in range and who's reachable through other phones (with hop counts)
+- Keeps relaying in the background
+- Battery modes: Performance / Balanced / Saver
+- Display names
 
-## 🛠️ Technical Architecture
+## Run it
 
-### 🛡️ Security & Identity
-
-* **Hardware-Backed Identity:** Node identities are generated using **Ed25519** elliptic curve cryptography (via `libsodium`).
-* **Secure Storage:** Private keys are stored in the **Android Keystore** / **iOS Secure Enclave** using `react-native-keychain`, ensuring keys never leave the device.
-* **End-to-End Encryption:** Messages are encrypted at the source using **X25519 + ChaCha20-Poly1305**, making relay nodes "blind" to the content they carry.
-
-### 📡 Networking (Hybrid Mesh)
-
-* **Discovery Layer:** Uses **BLE (Bluetooth Low Energy)** advertising and scanning for low-power peer detection.
-* **Data Layer:** High-speed data exchange via **Wi-Fi Direct (P2P)** sockets.
-* **Routing Strategy:** Implements a **Spray-and-Wait** multi-hop protocol to propagate messages through the mesh while preventing network congestion.
-
-### 🗄️ Local-First Data
-
-* **Persistence:** Powered by **Quick-SQLite** with **Write-Ahead Logging (WAL)** for high-concurrency performance.
-* **Deduplication:** A robust "seen-message" cache prevents relay loops and redundant storage.
-
----
-
-## 💻 Tech Stack
-
-* **Framework:** React Native (0.76+) with New Architecture (TurboModules)
-* **Native Logic:** Kotlin (Android) / Swift (iOS)
-* **Database:** Quick-SQLite
-* **State Management:** Zustand
-* **Cryptography:** libsodium (react-native-sodium)
-
----
-
-## 🚧 Project Status: Day 5+ (Core Features Complete)
-
-### Completed ✅
-
-* [x] **Identity Generation:** Ed25519 keypair generation and Android Keystore integration
-* [x] **End-to-End Encryption:** X25519 + XSalsa20-Poly1305 with ephemeral keypairs for forward secrecy
-* [x] **Message Signing & Verification:** Ed25519 detached signatures with canonical JSON
-* [x] **Local Persistence:** SQLite with Write-Ahead Logging (WAL) for high concurrency
-* [x] **BLE Discovery:** Peer scanning & advertising via manufacturer data (protocol v1)
-* [x] **Wi-Fi Direct:** TCP sockets, Group Owner negotiation, length-prefixed frames
-* [x] **Native Bridge:** Kotlin module orchestrating BLE + Wi-Fi Direct with event emission
-* [x] **Message Relay & Routing:** Spray-and-Wait protocol with TTL tracking and deduplication
-* [x] **Mesh Service:** Unified send/receive/relay pipeline with encryption integration
-
-### In Progress 🔄
-
-* [ ] **Multi-device testing:** Verify messages hop correctly across 3+ devices
-* [ ] **UI refinements:** Display routing paths, connection diagnostics
-* [ ] **Performance optimization:** Battery & bandwidth tuning
-
-### Architecture Highlights
-
-**Spray-and-Wait Routing**: Messages forward to 2 random peers per hop, reducing congestion while ensuring delivery probability.
-
-**Message Flow**:
-1. **Send**: `ChatScreen` → `meshService.sendMessage()` → encrypt (X25519) + sign (Ed25519) → serialize → transmit via Wi-Fi Direct to all peers
-2. **Receive**: `WifiDirectManager` → `meshService.handleMessageReceived()` → verify signature → decrypt if for us OR relay if TTL > 0
-3. **Relay**: Decrement TTL, add hop, forward to 2 random neighbors (exclude sender)
-
-**Deduplication**: Seen-message cache (SQLite) prevents loop-backs; 72-hour TTL ensures cleanup.
-
----
-
-## ⚙️ Development Setup
-
-### Prerequisites
-
-* Android NDK (Side-by-side)
-* CMake 3.10+
-* React Native CLI
-
-### Installation
+You need Android Studio (SDK + NDK), Node 18+, and **2 or more Android phones** with Google Play Services (Android 7+). The Android emulator can't do Bluetooth.
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/aetheris.git
-
-# Install dependencies
 npm install
-
-# Build the project
 npx react-native run-android
-
 ```
 
+Install it on each phone, open it, and allow the "Nearby devices" / location and notification permissions.
+
+## Test the multi-hop relay
+
+1. Put phone **A** and phone **C** far apart, out of range of each other (different floors or ~100 m+), with phone **B** in between.
+2. Wait for the Mesh tab on A to show C under *Through the mesh · 2 hops*.
+3. Send a message from A to C. It should show ✓✓, and long-pressing it should show `You → B → C`.
+4. **Store-carry-forward:** turn C off, send from A, carry B over to C, and turn C on. The message is delivered and the receipt comes back the same way.
+
+## Limits
+
+- **Android only for now.** iPhones don't support Nearby Connections. An iOS version would need Apple's Multipeer Connectivity and would only talk to other iPhones.
+- **Range:** about 30–100 m per hop, depending on walls and phones.
+- **Mesh size:** built for a few to a few dozen phones. Routes are capped at 16 hops.
+- **Attachments** are capped at ~300 KB, because every relay has to carry them.
+- Display names are chosen by each person and aren't verified. Identities (keys) are.
+
+## Code map
+
+| Path | What's there |
+|---|---|
+| `src/mesh/` | The mesh brain: routing table, forwarding, receipts. Plain TypeScript, fully simulated in tests |
+| `src/store/meshService.ts` | Connects the radio, the mesh, the database and the UI |
+| `src/crypto/` | Ed25519 identity and signatures, X25519 + XSalsa20‑Poly1305 encryption (libsodium) |
+| `src/db/` | SQLite storage |
+| `src/screens/` | UI |
+| `android/.../NearbyMeshManager.kt` | Radio: discovery, connections, sending bytes |
+| `android/.../MediaHelper.kt` | Photo compression, voice recording and playback |
+
+## Tests
+
+```bash
+npm test
+```
+
+The tests simulate meshes of up to 14 phones (including random layouts checked against true shortest paths), links breaking, offline carry-and-deliver, lost receipts and forged messages. They also run one relay end to end with real libsodium, and the app's service layer against real SQLite.
+
 ---
 
-## 🛡️ License
-
-Distributed under the MIT License. See `LICENSE` for more information.
-
----
-
-**Built with 💻 by cipher-d-dev.**
-*Exploring the boundaries of resilient communication.*
+MIT License · Built by cipher-d-dev
