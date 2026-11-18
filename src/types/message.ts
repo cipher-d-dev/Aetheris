@@ -16,7 +16,7 @@ export type MessageStatus =
 export type MessageType = 'MSG' | 'ACK' | 'HANDSHAKE_CHALLENGE' | 'HANDSHAKE_RESPONSE';
 
 export interface EncryptedPayload {
-  /** Base64 — ChaCha20-Poly1305 ciphertext */
+  /** Base64 — XSalsa20-Poly1305 ciphertext (libsodium crypto_box) */
   encrypted: string;
   /** Base64 — 24-byte random nonce */
   nonce: string;
@@ -33,6 +33,15 @@ export interface RoutingInfo {
   originTimestamp: number;
   /** Unix ms — message silently dropped after this point */
   expiresAt: number;
+  /**
+   * Spray-and-Wait copy budget. Used only when no route to the recipient is
+   * known: a node holding N > 1 copies hands half to a new neighbour and
+   * keeps the rest. With 1 copy it waits until it meets the recipient or
+   * learns a route. Not signed (relays change it).
+   */
+  copies?: number;
+  /** Retransmission attempt (0 = first). Not signed. Part of the dedup key. */
+  attempt?: number;
 }
 
 export interface MeshMessage {
@@ -68,10 +77,39 @@ export interface MeshMessage {
  * Decrypted content after the recipient opens the payload.
  * This is what gets displayed in the chat UI.
  */
+export type ContentKind = 'text' | 'image' | 'audio';
+
+export interface MediaAttachment {
+  /** e.g. image/jpeg, audio/mp4 */
+  mime: string;
+  /** Base64 file bytes */
+  data: string;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+}
+
+export interface GroupInfo {
+  id: string;
+  name: string;
+  /** Node IDs of every member, including the creator */
+  members: string[];
+}
+
 export interface MessageContent {
+  kind?: ContentKind;
   text?: string;
+  media?: MediaAttachment;
+  /** Sender's display name, carried inside the encrypted payload */
+  alias?: string;
+  /** Present when this message belongs to a group chat */
+  group?: GroupInfo;
+  /** ID shared by every per-member copy of one group message */
+  groupMessageId?: string;
   /** ID of the message being acknowledged — used in ACK messages */
   ackedMessageId?: string;
+  /** In ACKs: the relay nodes the acknowledged message passed through */
+  path?: string[];
 }
 
 /**
