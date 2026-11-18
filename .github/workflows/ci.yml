@@ -25,7 +25,7 @@ jobs:
       - run: npm test -- --ci
 
   android:
-    name: Android debug build
+    name: Android build (installable APK)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,11 +39,14 @@ jobs:
           java-version: 17
           cache: gradle
       - run: npm ci
+      # Release variant: the JS bundle is inside the APK, so it runs on any
+      # phone without a computer running Metro. Signed with the debug key
+      # unless a release key is configured (see README).
       - name: Build APK (arm64 only, to keep CI fast)
         working-directory: android
-        run: ./gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a --no-daemon
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: aetheris-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: aetheris-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 14

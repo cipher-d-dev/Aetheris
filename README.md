@@ -99,7 +99,7 @@ npm run typecheck
 npm run lint
 ```
 
-GitHub Actions runs these on every pull request and builds a debug APK, which you can download from the run's artifacts.
+GitHub Actions runs these on every pull request and builds a ready-to-install APK (`aetheris-apk`), which you can download from the run's artifacts.
 
 The tests simulate meshes of up to 14 phones (including random layouts checked against true shortest paths), links breaking, offline carry-and-deliver, lost receipts and forged messages. They also run one relay end to end with real libsodium, and the app's service layer against real SQLite.
 
