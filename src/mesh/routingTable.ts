@@ -16,6 +16,12 @@
  *     unreachable with an odd sequence number (seq + 1) so the bad news
  *     spreads instead of being overwritten by stale good news.
  *
+ * Every node signs its own (sequence number, display name) pair. Relays pass
+ * the signature along unchanged, so nobody can invent a fresher sequence
+ * number for someone else (which would let them black-hole that node's
+ * traffic) or spoof another node's display name. Signatures are checked by
+ * MeshNode before an advert reaches this table.
+ *
  * The result: for each destination we know the next hop on the shortest
  * currently-known path. Pure TypeScript, no React Native imports, so it can
  * be unit-tested and simulated.
@@ -32,8 +38,10 @@ export interface RouteEntry {
   hops: number;
   /** Destination-originated sequence number */
   seq: number;
-  /** Display name the destination advertises for itself (unauthenticated) */
+  /** Display name the destination advertises for itself (signed by it) */
   alias?: string;
+  /** Destination's signature over routeOriginText(dest, evenSeq(seq), alias) */
+  sig?: string;
   /** Local time this entry was last refreshed */
   updatedAt: number;
 }
@@ -44,6 +52,17 @@ export interface AdvertEntry {
   h: number; // hops
   s: number; // seq
   a?: string; // alias
+  g?: string; // destination's signature over (d, even seq, a)
+}
+
+/** Odd sequence numbers mean "broken"; they derive from the even one before. */
+export function evenSeq(seq: number): number {
+  return seq - (seq % 2);
+}
+
+/** The text a node signs to originate its routing entry. */
+export function routeOriginText(dest: string, seq: number, alias?: string): string {
+  return `aetheris-route-v1|${dest}|${evenSeq(seq)}|${alias ?? ''}`;
 }
 
 export class RoutingTable {
@@ -60,6 +79,10 @@ export class RoutingTable {
     // Must be even: even = originated by the destination, odd = "broken".
     const t = Math.floor(now() / 1000) * 2;
     this.ownSeq = t;
+  }
+
+  get ownSeqNumber(): number {
+    return this.ownSeq;
   }
 
   /** Bump our own sequence number; called before each periodic advert. */
@@ -83,8 +106,9 @@ export class RoutingTable {
       hops: 1,
       // Keep the freshest seq we know of; the neighbour's next advert will
       // refresh it. Using an odd seq would be wrong (it means "broken").
-      seq: existing ? existing.seq + (existing.seq % 2) : 0,
-      alias: alias ?? existing?.alias,
+      seq: existing ? existing.seq : 0,
+      alias: existing?.alias ?? alias,
+      sig: existing?.sig,
       updatedAt: t,
     });
     return true;
@@ -129,12 +153,14 @@ export class RoutingTable {
         if (!current || current.nextHop !== from || current.hops !== 1 || current.seq < e.s) {
           changed = true;
         }
+        const newer = !current || e.s >= current.seq;
         this.routes.set(from, {
           dest: from,
           nextHop: from,
           hops: 1,
-          seq: Math.max(e.s, current?.seq ?? 0),
-          alias: e.a ?? current?.alias,
+          seq: newer ? e.s : current!.seq,
+          alias: newer ? e.a : current!.alias,
+          sig: newer ? e.g : current!.sig,
           updatedAt: t,
         });
         continue;
@@ -142,7 +168,7 @@ export class RoutingTable {
 
       if (!current) {
         if (hops >= INFINITY_HOPS) continue; // don't learn dead routes
-        this.routes.set(e.d, {dest: e.d, nextHop: from, hops, seq: e.s, alias: e.a, updatedAt: t});
+        this.routes.set(e.d, {dest: e.d, nextHop: from, hops, seq: e.s, alias: e.a, sig: e.g, updatedAt: t});
         changed = true;
         continue;
       }
@@ -157,7 +183,8 @@ export class RoutingTable {
         current.nextHop = from;
         current.hops = hops;
         current.seq = e.s;
-        if (e.a) current.alias = e.a;
+        current.alias = e.a;
+        current.sig = e.g;
         current.updatedAt = t;
         if (differs) changed = true;
       } else if (current.nextHop === from) {
@@ -191,12 +218,15 @@ export class RoutingTable {
    * Split horizon with poisoned reverse: routes learned through that
    * neighbour are advertised back to it as unreachable.
    */
-  buildAdvert(neighbour: string, selfAlias?: string): AdvertEntry[] {
-    const out: AdvertEntry[] = [{d: this.selfId, h: 0, s: this.ownSeq, ...(selfAlias ? {a: selfAlias} : {})}];
+  buildAdvert(neighbour: string, self: {alias?: string; sig?: string} = {}): AdvertEntry[] {
+    const own: AdvertEntry = {d: this.selfId, h: 0, s: this.ownSeq};
+    if (self.alias) own.a = self.alias;
+    if (self.sig) own.g = self.sig;
+    const out: AdvertEntry[] = [own];
     for (const r of this.routes.values()) {
-      if (r.dest === neighbour) continue;
+      if (r.dest === neighbour || !r.sig) continue; // unsigned entries can't be checked
       const poisoned = r.nextHop === neighbour;
-      const entry: AdvertEntry = {d: r.dest, h: poisoned ? INFINITY_HOPS : r.hops, s: r.seq};
+      const entry: AdvertEntry = {d: r.dest, h: poisoned ? INFINITY_HOPS : r.hops, s: r.seq, g: r.sig};
       if (r.alias) entry.a = r.alias;
       out.push(entry);
     }

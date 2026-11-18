@@ -31,7 +31,10 @@ import {Buffer} from 'buffer';
 import {AetherisBridge} from '../../native/AetherisBridge';
 import {initDatabase, dbGetConversation, dbGetGroup} from '../../db/database';
 import {useMeshService} from '../meshService';
-import {useMessagesStore} from '../messagesStore';
+import {displayName, useMessagesStore} from '../messagesStore';
+import {addContactFromText} from '../../contacts/addContact';
+import {buildContactLink} from '../../contacts/contactLink';
+import {dbGetPeer, dbSetNickname, dbUpdateMessageStatus} from '../../db/database';
 import {MeshNode} from '../../mesh/meshNode';
 import {createRnCrypto} from '../../mesh/rnCrypto';
 import {MemoryStore} from '../../mesh/testing/simNetwork';
@@ -146,6 +149,44 @@ describe('meshService with a peer phone', () => {
     await settle();
     expect(dbGetGroup(gid)).toMatchObject({name: 'Hikers'});
     expect(dbGetConversation(`group:${gid}`).at(-1)!.text).toBe('new group!');
+  });
+
+  it('adds contacts from QR/links, verifies scans, and prefers nicknames', async () => {
+    const dana = await keypair();
+    const link = buildContactLink(dana.id, 'Dana');
+    expect(addContactFromText(link, me.id, false)).toMatchObject({ok: true});
+    expect(dbGetPeer(dana.id)).toMatchObject({alias: 'Dana', verified: false});
+    addContactFromText(link, me.id, true); // scanned in person later
+    expect(dbGetPeer(dana.id)!.verified).toBe(true);
+    expect(addContactFromText(buildContactLink(me.id), me.id, true)).toMatchObject({reason: 'self'});
+
+    expect(displayName(bob.id)).toBe('Bob');
+    dbSetNickname(bob.id, 'Bobby (work)');
+    expect(displayName(bob.id, 'Bob')).toBe('Bobby (work)');
+    dbSetNickname(bob.id, '');
+    expect(displayName(bob.id)).toBe('Bob');
+  });
+
+  it('deleting an undelivered message stops its delivery; retry resends it', async () => {
+    const erin = await keypair(); // nowhere on the mesh: the message is carried
+    const svc = useMeshService.getState();
+    const before = svc.carrying;
+    const id = await svc.sendToConversation(erin.id, {kind: 'text', text: 'are you there?'});
+    await settle();
+    // Bob may hold a sprayed copy; our own copy is what we can cancel.
+    expect(useMeshService.getState().carrying).toBeGreaterThan(before);
+
+    useMeshService.getState().deleteMessage(id);
+    expect(dbGetConversation(erin.id).find(m => m.id === id)).toBeUndefined();
+    expect(useMeshService.getState().carrying).toBe(before);
+
+    const id2 = await svc.sendToConversation(erin.id, {kind: 'text', text: 'second try'});
+    dbUpdateMessageStatus(id2, 'failed');
+    await useMeshService.getState().retryMessage(id2);
+    const conv = dbGetConversation(erin.id);
+    expect(conv.map(m => m.text)).toEqual(['second try']);
+    expect(conv[0].id).not.toBe(id2);
+    expect(conv[0].status).not.toBe('failed'); // queued again (and sprayed to Bob)
   });
 
   it('marks routes down when the link drops', async () => {

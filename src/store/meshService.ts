@@ -28,6 +28,8 @@ import {
   dbUpsertGroup,
   dbUpsertPeer,
   dbAddGroupDelivery,
+  dbDeleteMessage,
+  dbGetMessage,
 } from '../db/database';
 import {
   displayName,
@@ -38,6 +40,7 @@ import {
 } from './messagesStore';
 import {ContentKind, GroupInfo, MediaAttachment, MessageContent, MeshMessage} from '../types/message';
 import {uuid} from '../utils/uuid';
+import {logEvent} from '../utils/logBuffer';
 import {
   checkRadioPermissions,
   RadioPermissionState,
@@ -139,6 +142,10 @@ interface MeshState {
   setPowerMode: (mode: PowerMode) => void;
   sendToConversation: (conversationId: string, content: OutgoingContent) => Promise<string>;
   createGroup: (name: string, memberIds: string[]) => string;
+  /** Delete on this phone; also stops delivery if it hasn't arrived yet. */
+  deleteMessage: (messageId: string) => void;
+  /** Send a failed message again as a new message. */
+  retryMessage: (messageId: string) => Promise<void>;
 }
 
 let node: MeshNode | null = null;
@@ -180,6 +187,7 @@ export const useMeshService = create<MeshState>((set, get) => {
   const onDeliver = (m: MeshMessage, content: MessageContent) => {
     const self = get().selfId!;
     const senderId = m.sender.id;
+    logEvent(`delivered ${m.id.slice(0, 8)} from ${senderId.slice(0, 6)} after ${m.routing.hops.length + 1} hop(s)`);
     const alias = typeof content.alias === 'string' ? content.alias.slice(0, 32) : undefined;
     dbUpsertPeer(senderId, alias);
 
@@ -254,6 +262,7 @@ export const useMeshService = create<MeshState>((set, get) => {
   };
 
   const onAck = (id: string, path: string[]) => {
+    logEvent(`ack for ${id.slice(0, 8)} via ${path.length} relay(s)`);
     const parent = dbGroupParent(id);
     if (parent) {
       const {delivered, total} = dbMarkGroupDelivered(id);
@@ -319,7 +328,13 @@ export const useMeshService = create<MeshState>((set, get) => {
             onSent,
             onExpired,
             onTopologyChanged: refreshTopology,
-            log: msg => console.log(msg),
+            onCarryChanged: count => {
+              if (get().carrying !== count) set({carrying: count});
+            },
+            log: msg => {
+              logEvent(msg);
+              if (__DEV__) console.log(msg);
+            },
           },
           {...profile.mesh, routeTimeoutMs: ROUTE_TIMEOUT_MS},
         );
@@ -335,15 +350,21 @@ export const useMeshService = create<MeshState>((set, get) => {
             nearbyEndpoints.delete(e.endpointId);
             set({nearbyCount: nearbyEndpoints.size});
           }),
-          AetherisBridge.onLinkUp(e => void node?.onLinkUp(e.linkId)),
-          AetherisBridge.onLinkDown(e => node?.onLinkDown(e.linkId)),
+          AetherisBridge.onLinkUp(e => {
+            logEvent(`radio: link ${e.linkId} up (${e.nodeId.slice(0, 6)})`);
+            void node?.onLinkUp(e.linkId);
+          }),
+          AetherisBridge.onLinkDown(e => {
+            logEvent(`radio: link ${e.linkId} down`);
+            node?.onLinkDown(e.linkId);
+          }),
           AetherisBridge.onFrame(e => void node?.onFrame(e.linkId, e.data)),
           AetherisBridge.onTick(() => {
             if (!node) return;
             node.tick().then(() => set({carrying: node?.carryCount() ?? 0}));
           }),
           AetherisBridge.onRadioError(e => {
-            console.warn('[meshService] radio error', e.code, e.message);
+            logEvent(`radio error ${e.code}: ${e.message}`);
             set({error: e.message});
           }),
         ];
@@ -353,8 +374,9 @@ export const useMeshService = create<MeshState>((set, get) => {
         lastLinked = -1;
         applyDutyCycle(true);
         set({status: 'running', carrying: node.carryCount()});
+        logEvent(`mesh started as ${selfId.slice(0, 6)} (${powerMode})`);
       } catch (e: any) {
-        console.error('[meshService] start failed', e);
+        logEvent(`start failed: ${e?.message ?? e}`);
         set({status: 'error', error: e?.message ?? String(e)});
       }
     },
@@ -443,6 +465,25 @@ export const useMeshService = create<MeshState>((set, get) => {
       }
       set({carrying: node.carryCount()});
       return id;
+    },
+
+    deleteMessage: (messageId: string) => {
+      const conversationId = dbGetMessageConversation(messageId);
+      const subs = dbDeleteMessage(messageId);
+      for (const id of [messageId, ...subs]) node?.cancel(id);
+      set({carrying: node?.carryCount() ?? 0});
+      useMessagesStore.getState().refresh(conversationId ?? undefined);
+    },
+
+    retryMessage: async (messageId: string) => {
+      const m = dbGetMessage(messageId);
+      if (!m || !m.isOutbound) return;
+      get().deleteMessage(messageId);
+      await get().sendToConversation(m.conversationId, {
+        kind: m.kind,
+        text: m.text || undefined,
+        media: m.media,
+      });
     },
 
     createGroup: (name: string, memberIds: string[]) => {

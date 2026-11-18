@@ -10,18 +10,22 @@ No internet, no cell signal, no servers, no accounts. Every phone running Aether
 2. **Finding the route.** Every few seconds each phone tells its neighbours who it can reach and in how many hops. From that, every phone works out the next hop on the **shortest path** to everyone in the mesh. If a phone walks away, the routes heal around it.
 3. **When there's no route yet.** The message waits on your phone, and a few copies are handed to people you meet. It's delivered when a route appears or when someone carrying it walks into range of the recipient.
 4. **Privacy.** Messages are end-to-end encrypted. The phones relaying them can't read them. Your identity is a key pair stored on your device; there's no phone number or email.
+5. **Trust.** Each phone signs its own route announcements and display name, so another phone can't fake a route to steal someone's messages or pretend to be someone else.
 
 You get a delivery receipt (double tick ✓✓) when the message arrives. Long-press a message to see the route it took.
 
 ## Features
 
+- Add people by **scanning their QR code** (this also verifies them ✓🛡) or by sharing a link
 - 1:1 and group chats
 - Photos (auto-compressed) and voice notes
 - Sent / delivered ticks, plus the route each message took
 - **Mesh** tab showing who's in range and who's reachable through other phones (with hop counts)
 - Keeps relaying in the background
 - Battery modes: Performance / Balanced / Saver
-- Display names
+- Display names, plus private nicknames for your contacts
+- Long-press a message: info and route, delete, send again
+- **Diagnostics** (Settings): live routing table and an event log you can share
 
 ## Run it
 
@@ -33,6 +37,31 @@ npx react-native run-android
 ```
 
 Install it on each phone, open it, and allow the "Nearby devices" / location and notification permissions.
+
+### Release build
+
+Create a signing key once:
+
+```bash
+keytool -genkeypair -v -keystore aetheris-release.keystore -alias aetheris -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Then add these lines to `~/.gradle/gradle.properties`, outside the repo (never commit them):
+
+```
+AETHERIS_UPLOAD_STORE_FILE=/absolute/path/to/aetheris-release.keystore
+AETHERIS_UPLOAD_STORE_PASSWORD=...
+AETHERIS_UPLOAD_KEY_ALIAS=aetheris
+AETHERIS_UPLOAD_KEY_PASSWORD=...
+```
+
+Build the APK:
+
+```bash
+cd android && ./gradlew assembleRelease
+```
+
+Install it on every test phone. All phones need a build from the same key, or Android won't update over an existing install.
 
 ## Test the multi-hop relay
 
@@ -47,7 +76,8 @@ Install it on each phone, open it, and allow the "Nearby devices" / location and
 - **Range:** about 30–100 m per hop, depending on walls and phones.
 - **Mesh size:** built for a few to a few dozen phones. Routes are capped at 16 hops.
 - **Attachments** are capped at ~300 KB, because every relay has to carry them.
-- Display names are chosen by each person and aren't verified. Identities (keys) are.
+- Display names are chosen by each person. They're signed, so they can't be spoofed, but anyone can pick any name. Scan a QR code in person to be sure who someone is.
+- The QR scanner comes from Google Play Services and is downloaded when the app is installed. On a phone that installed the app offline, use "Share link" instead.
 
 ## Code map
 
@@ -65,7 +95,11 @@ Install it on each phone, open it, and allow the "Nearby devices" / location and
 
 ```bash
 npm test
+npm run typecheck
+npm run lint
 ```
+
+GitHub Actions runs these on every pull request and builds a debug APK, which you can download from the run's artifacts.
 
 The tests simulate meshes of up to 14 phones (including random layouts checked against true shortest paths), links breaking, offline carry-and-deliver, lost receipts and forged messages. They also run one relay end to end with real libsodium, and the app's service layer against real SQLite.
 

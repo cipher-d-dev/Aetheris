@@ -222,3 +222,50 @@ describe('randomised meshes', () => {
     });
   }
 });
+
+describe('routing security', () => {
+  it('ignores a forged route that claims a fresher sequence number for someone else', async () => {
+    // A - B - C - D. B turns malicious and claims D is right next to it,
+    // with a huge (unsigned) sequence number, to swallow D's traffic.
+    const net = await build(['A', 'B', 'C', 'D'], [['A', 'B'], ['B', 'C'], ['C', 'D']]);
+    const forged = {t: 'ROUTES', r: [{d: 'D', h: 0, s: 9e12, g: 'B|forged'}]};
+    await net.get('A').node.onFrame('A->B', JSON.stringify(forged));
+    await net.settle();
+    expect(net.get('A').node.table.get('D')).toMatchObject({hops: 3});
+    expect(net.get('A').node.table.get('D')!.seq).toBeLessThan(9e12);
+  });
+
+  it('only accepts display names signed by their owner', async () => {
+    const net = new SimNetwork();
+    ['A', 'B', 'C'].forEach(id => net.add(id));
+    net.get('C').node.alias = 'Carol';
+    for (const [a, b] of [['A', 'B'], ['B', 'C']] as const) await net.link(a, b);
+    await net.advance(30_000);
+    expect(net.get('A').node.table.get('C')!.alias).toBe('Carol');
+
+    // B re-advertises C's current seq under a different name.
+    const real = net.get('A').node.table.get('C')!;
+    const spoof = {t: 'ROUTES', r: [{d: 'C', h: 0, s: real.seq, a: 'Mallory', g: real.sig}]};
+    await net.get('A').node.onFrame('A->B', JSON.stringify(spoof));
+    expect(net.get('A').node.table.get('C')!.alias).toBe('Carol');
+  });
+});
+
+describe('storage limits', () => {
+  it('evicts the oldest messages held for others, never our own', async () => {
+    const net = new SimNetwork({maxCarriedForOthers: 3});
+    ['A', 'B', 'X'].forEach(id => net.add(id));
+    await net.link('A', 'B');
+    await net.advance(20_000);
+    // A has no route to X, so B ends up carrying A's messages for X.
+    const own = await net.get('B').node.send({recipientId: 'X', content: {text: 'mine'}});
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      ids.push((await net.get('A').node.send({recipientId: 'X', content: {text: `${i}`}})).id);
+    }
+    await net.settle();
+    const held = [...net.get('B').store.carried.keys()];
+    expect(held).toContain(own.id);
+    expect(held.filter(id => id !== own.id)).toEqual(ids.slice(-3));
+  });
+});

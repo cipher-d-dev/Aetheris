@@ -40,9 +40,16 @@ export async function initDatabase(): Promise<void> {
     run(sql);
   }
   run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  ensureColumn('peers', 'verified', 'INTEGER DEFAULT 0');
+  ensureColumn('peers', 'nickname', 'TEXT');
 
   run('DELETE FROM seen_message_ids WHERE seen_at < ?', [Date.now() - SEEN_RETENTION_MS]);
   run('DELETE FROM carried_messages WHERE expires_at < ?', [Date.now()]);
+}
+
+function ensureColumn(table: string, column: string, definition: string): void {
+  const exists = rows(`PRAGMA table_info(${table})`).some((r: any) => r.name === column);
+  if (!exists) run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -153,6 +160,19 @@ export function dbListConversations(): ConversationRow[] {
   }));
 }
 
+export function dbGetMessage(id: string): MessageRow | null {
+  const r = rows('SELECT * FROM messages WHERE id = ?', [id])[0];
+  return r ? rowToMessage(r) : null;
+}
+
+/** Delete one message on this phone. Returns group sub-IDs that were in flight. */
+export function dbDeleteMessage(id: string): string[] {
+  const subs = rows('SELECT sub_id FROM group_deliveries WHERE message_id = ?', [id]).map(r => r.sub_id);
+  run('DELETE FROM group_deliveries WHERE message_id = ?', [id]);
+  run('DELETE FROM messages WHERE id = ?', [id]);
+  return subs;
+}
+
 export function dbDeleteConversation(conversationId: string): void {
   run('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
 }
@@ -194,8 +214,23 @@ function safeJson(s: string): any {
 
 export interface PeerRow {
   id: string;
+  /** Name the person chose for themselves */
   alias?: string;
+  /** Name you gave them (overrides alias, only on this phone) */
+  nickname?: string;
+  /** You scanned their QR code in person */
+  verified: boolean;
   lastSeen: number;
+}
+
+function rowToPeer(r: any): PeerRow {
+  return {
+    id: r.id,
+    alias: r.alias ?? undefined,
+    nickname: r.nickname ?? undefined,
+    verified: r.verified === 1,
+    lastSeen: r.last_seen ?? 0,
+  };
 }
 
 export function dbUpsertPeer(id: string, alias?: string): void {
@@ -209,15 +244,23 @@ export function dbUpsertPeer(id: string, alias?: string): void {
 
 export function dbGetPeer(id: string): PeerRow | null {
   const r = rows('SELECT * FROM peers WHERE id = ?', [id])[0];
-  return r ? {id: r.id, alias: r.alias ?? undefined, lastSeen: r.last_seen ?? 0} : null;
+  return r ? rowToPeer(r) : null;
 }
 
 export function dbListPeers(): PeerRow[] {
-  return rows('SELECT * FROM peers ORDER BY last_seen DESC').map(r => ({
-    id: r.id,
-    alias: r.alias ?? undefined,
-    lastSeen: r.last_seen ?? 0,
-  }));
+  return rows('SELECT * FROM peers ORDER BY verified DESC, last_seen DESC').map(rowToPeer);
+}
+
+/** Add someone from a QR code / link. Scanning in person marks them verified. */
+export function dbAddContact(id: string, alias: string | undefined, verified: boolean): void {
+  dbUpsertPeer(id, alias);
+  if (verified) run('UPDATE peers SET verified = 1 WHERE id = ?', [id]);
+}
+
+export function dbSetNickname(id: string, nickname: string): void {
+  dbUpsertPeer(id);
+  const clean = nickname.trim().slice(0, 32);
+  run('UPDATE peers SET nickname = ? WHERE id = ?', [clean || null, id]);
 }
 
 /**
