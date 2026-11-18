@@ -47,23 +47,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Contact links: aetheris://add/<nodeId>?name=... -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="aetheris" android:host="add" />
-            </intent-filter>
         </activity>
 
         <service 
             android:name=".AetherisService" 
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
-        <!-- Download the QR scanner module at install time (while online),
-             so scanning works later with no internet. -->
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="barcode_ui" />
     </application>
 </manifest>

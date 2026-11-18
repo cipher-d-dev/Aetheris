@@ -5,7 +5,7 @@ import {
   StyleSheet,
   FlatList,
   TextInput,
-  TouchableOpacity,
+  Pressable,
   KeyboardAvoidingView,
   Platform,
   Image,
@@ -13,9 +13,8 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/Feather';
 import {useNavigation, useRoute} from '@react-navigation/native';
-import {useThemeStore, Font} from '../theme';
+import {Font, useThemeStore} from '../theme';
 import {
   ChatMessage,
   conversationTitle,
@@ -27,121 +26,135 @@ import {
 import {MAX_MEDIA_BASE64, useMeshService} from '../store/meshService';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
-import {dbGetGroup, dbGetPeer, dbResolvePeerId} from '../db/database';
+import {dbGetGroup} from '../db/database';
 import {useIdentityStore} from '../store/identityStore';
+import Avatar, {avatarColor} from '../ui/Avatar';
+import {Icon} from '../ui/Icon';
+import IconButton from '../ui/IconButton';
+import {formatClock, isNearby, presenceText} from '../ui/presence';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-}
-
-function formatDay(ts: number): string {
+function dayLabel(ts: number): string {
   const d = new Date(ts);
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
   if (d.toDateString() === today.toDateString()) return 'Today';
   if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString(undefined, {weekday: 'long', month: 'short', day: 'numeric'});
+  return d.toLocaleDateString(undefined, {weekday: 'long', day: 'numeric', month: 'long'});
 }
 
-function formatDuration(ms: number): string {
-  const s = Math.round(ms / 1000);
+function duration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
-function routeDescription(m: ChatMessage, selfId: string): string {
-  const relays = m.route ?? [];
-  const from = m.isOutbound ? 'You' : displayName(m.senderId, m.senderAlias);
-  const to = m.isOutbound ? conversationTitle(m.conversationId) : 'You';
-  const chain = [from, ...relays.map(r => (r === selfId ? 'You' : displayName(r))), to];
-  const hops = relays.length + 1;
-  return `${chain.join(' → ')}\n\n${hops === 1 ? 'Direct (1 hop)' : `${hops} hops`}`;
+/** Deterministic pseudo-waveform so each voice note looks distinct. */
+function waveform(seed: string, bars = 28): number[] {
+  let h = 7;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return Array.from({length: bars}, (_, i) => {
+    h = (h * 1103515245 + 12345) | 0;
+    const r = ((h >>> 8) % 1000) / 1000;
+    const envelope = Math.sin((Math.PI * (i + 1)) / (bars + 1));
+    return 0.25 + 0.75 * r * envelope;
+  });
 }
 
-// ─── Status ticks ─────────────────────────────────────────────────────────────
+// ─── Ticks ────────────────────────────────────────────────────────────────────
 
-function StatusTicks({m}: {m: ChatMessage}) {
-  const color = 'rgba(255,255,255,0.75)';
-  if (m.status === 'pending') return <Icon name="clock" size={11} color={color} />;
-  if (m.status === 'failed') return <Icon name="alert-circle" size={11} color="#FFD1D1" />;
+function Ticks({m, color}: {m: ChatMessage; color: string}) {
+  if (m.status === 'pending') return <Icon name="time-outline" size={14} color={color} />;
+  if (m.status === 'failed') return <Icon name="alert-circle" size={15} color="#FFD7D9" />;
   const delivered = m.status === 'delivered';
-  return (
-    <View style={styles.ticks}>
-      {m.recipientCount ? (
-        <Text style={[styles.groupCount, {color}]}>
-          {m.deliveredCount ?? 0}/{m.recipientCount}
-        </Text>
-      ) : null}
-      <Icon name="check" size={11} color={delivered ? '#FFFFFF' : color} />
-      {delivered && <Icon name="check" size={11} color="#FFFFFF" style={styles.secondTick} />}
-    </View>
-  );
+  return <Icon name={delivered ? 'checkmark-done' : 'checkmark'} size={16} color={delivered ? '#FFFFFF' : color} />;
 }
 
 // ─── Bubble ───────────────────────────────────────────────────────────────────
 
 function Bubble({
   m,
+  first,
+  last,
   showSender,
-  playingId,
+  playing,
   onPlay,
-  onOpenImage,
-  onInfo,
+  onImage,
+  onLongPress,
 }: {
   m: ChatMessage;
+  first: boolean;
+  last: boolean;
   showSender: boolean;
-  playingId: string | null;
-  onPlay: (m: ChatMessage) => void;
-  onOpenImage: (uri: string) => void;
-  onInfo: (m: ChatMessage) => void;
+  playing: boolean;
+  onPlay: () => void;
+  onImage: (uri: string) => void;
+  onLongPress: () => void;
 }) {
   const {theme: t} = useThemeStore();
   const out = m.isOutbound;
-  const fg = out ? '#FFFFFF' : t.text;
-  const sub = out ? 'rgba(255,255,255,0.7)' : t.textMuted;
+  const fg = out ? t.bubbleOutText : t.bubbleInText;
+  const meta = out ? t.bubbleOutMeta : t.bubbleInMeta;
   const uri = m.kind === 'image' && m.media ? `data:${m.media.mime};base64,${m.media.data}` : null;
   const aspect = m.media?.width && m.media?.height ? m.media.width / m.media.height : 1;
+  const big = 20;
+  const small = 6;
+
+  const radius = out
+    ? {borderTopLeftRadius: big, borderBottomLeftRadius: big, borderTopRightRadius: first ? big : small, borderBottomRightRadius: last ? small : small}
+    : {borderTopRightRadius: big, borderBottomRightRadius: big, borderTopLeftRadius: first ? big : small, borderBottomLeftRadius: last ? small : small};
+  if (out && first && last) radius.borderBottomRightRadius = small;
+  if (!out && first && last) radius.borderBottomLeftRadius = small;
+
+  const timeAndTicks = (
+    <View style={styles.meta}>
+      <Text style={[styles.metaText, {color: meta}]}>{formatClock(m.createdAt)}</Text>
+      {out && <Ticks m={m} color={meta} />}
+    </View>
+  );
 
   return (
-    <View style={[styles.row, out ? styles.rowOut : styles.rowIn]}>
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onLongPress={() => onInfo(m)}
-        onPress={() => (uri ? onOpenImage(uri) : m.kind === 'audio' ? onPlay(m) : undefined)}
+    <View style={[styles.row, out ? styles.rowOut : styles.rowIn, last && {marginBottom: 6}]}>
+      <Pressable
+        onLongPress={onLongPress}
+        delayLongPress={300}
+        onPress={() => (uri ? onImage(uri) : m.kind === 'audio' ? onPlay() : undefined)}
         style={[
           styles.bubble,
-          out
-            ? {backgroundColor: t.accent, borderBottomRightRadius: 4}
-            : {backgroundColor: t.surface, borderColor: t.border, borderWidth: 1, borderBottomLeftRadius: 4},
-          uri ? styles.imageBubble : null,
+          radius,
+          {backgroundColor: out ? t.bubbleOut : t.bubbleIn},
+          uri && styles.imageBubble,
+          !t.isDark && !out && styles.inShadow,
         ]}>
         {showSender && !out && (
-          <Text style={[styles.sender, {color: t.accent}]}>{displayName(m.senderId, m.senderAlias)}</Text>
+          <Text style={[styles.sender, {color: avatarColor(m.senderId)}]}>
+            {displayName(m.senderId, m.senderAlias)}
+          </Text>
         )}
-        {uri && <Image source={{uri}} style={[styles.image, {aspectRatio: aspect}]} resizeMode="cover" />}
+        {uri && <Image source={{uri}} style={[styles.image, radius, {aspectRatio: aspect}]} resizeMode="cover" />}
         {m.kind === 'audio' && (
-          <View style={styles.audioRow}>
-            <Icon name={playingId === m.id ? 'square' : 'play'} size={18} color={fg} />
-            <View style={[styles.audioBar, {backgroundColor: sub}]} />
-            <Text style={[styles.audioTime, {color: sub}]}>
-              {formatDuration(m.media?.durationMs ?? 0)}
-            </Text>
+          <View style={styles.audio}>
+            <View style={[styles.playButton, {backgroundColor: out ? 'rgba(255,255,255,0.22)' : t.primary}]}>
+              <Icon name={playing ? 'pause' : 'play'} size={18} color="#FFFFFF" style={!playing && {marginLeft: 2}} />
+            </View>
+            <View style={styles.wave}>
+              {waveform(m.id).map((h, i) => (
+                <View key={i} style={[styles.waveBar, {height: 4 + h * 22, backgroundColor: out ? 'rgba(255,255,255,0.75)' : t.textMuted}]} />
+              ))}
+            </View>
+            <Text style={[styles.audioTime, {color: meta}]}>{duration(m.media?.durationMs ?? 0)}</Text>
           </View>
         )}
-        {!!m.text && <Text style={[styles.text, {color: fg}, uri ? styles.caption : null]}>{m.text}</Text>}
-        <View style={[styles.meta, uri ? styles.caption : null]}>
-          {(m.route?.length ?? 0) > 0 && (
-            <Text style={[styles.metaText, {color: sub}]}>
-              via {m.route!.length} relay{m.route!.length === 1 ? '' : 's'} ·
-            </Text>
-          )}
-          <Text style={[styles.metaText, {color: sub}]}>{formatTime(m.createdAt)}</Text>
-          {out && <StatusTicks m={m} />}
-        </View>
-      </TouchableOpacity>
+        {m.text ? (
+          <View style={[styles.textRow, uri && styles.caption]}>
+            <Text style={[styles.text, {color: fg}]}>{m.text}</Text>
+            <View style={styles.inlineMeta}>{timeAndTicks}</View>
+          </View>
+        ) : (
+          <View style={[styles.metaWrap, uri && styles.metaOnImage]}>{timeAndTicks}</View>
+        )}
+      </Pressable>
     </View>
   );
 }
@@ -151,12 +164,9 @@ function Bubble({
 export default function ChatScreen() {
   const {theme: t} = useThemeStore();
   const navigation = useNavigation<any>();
-  const route = useRoute<any>();
-  const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? '');
-
-  const rawId: string = route.params?.conversationId ?? route.params?.peerId ?? '';
-  const conversationId = isGroupConversation(rawId) ? rawId : dbResolvePeerId(rawId) ?? rawId;
+  const conversationId: string = useRoute<any>().params?.conversationId ?? '';
   const isGroup = isGroupConversation(conversationId);
+  const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? '');
 
   const messages = useMessagesStore(s => s.messages[conversationId]) ?? [];
   const {loadMessages, setActiveConversation} = useMessagesStore.getState();
@@ -165,8 +175,8 @@ export default function ChatScreen() {
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [recording, setRecording] = useState<number | null>(null);
-  const [recordElapsed, setRecordElapsed] = useState(0);
+  const [recordingSince, setRecordingSince] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
@@ -187,33 +197,26 @@ export default function ChatScreen() {
   }, []);
 
   useEffect(() => {
-    if (recording === null) return;
-    const timer = setInterval(() => setRecordElapsed(Date.now() - recording), 250);
+    if (recordingSince === null) return;
+    const timer = setInterval(() => setElapsed(Date.now() - recordingSince), 200);
     return () => clearInterval(timer);
-  }, [recording]);
+  }, [recordingSince]);
 
-  const verified = !isGroup && (dbGetPeer(conversationId)?.verified ?? false);
-
-  // Header subtitle: how reachable is this person right now?
-  let subtitle: string;
-  if (isGroup) {
-    const g = dbGetGroup(groupIdOf(conversationId));
-    const others = (g?.members ?? []).filter(id => id !== selfId);
-    const reachable = others.filter(id => routes.some(r => r.id === id)).length;
-    subtitle = `${others.length + 1} members · ${reachable} reachable now`;
-  } else {
-    const r = routes.find(x => x.id === conversationId);
-    subtitle = !r
-      ? 'Not reachable now — messages will be carried'
-      : r.hops === 1
-      ? 'In range · direct link'
-      : `${r.hops} hops away`;
-  }
+  const title = conversationTitle(conversationId);
+  const group = isGroup ? dbGetGroup(groupIdOf(conversationId)) : null;
+  const nearby = !isGroup && isNearby(conversationId, routes);
+  const subtitle = isGroup
+    ? (group?.members ?? [])
+        .filter(id => id !== selfId)
+        .map(id => displayName(id))
+        .concat('You')
+        .join(', ')
+    : presenceText(conversationId, routes);
 
   const send = async (content: Parameters<typeof sendToConversation>[1]) => {
     setError('');
     if (status !== 'running') {
-      setError('The mesh radio is not running. Check the Mesh tab.');
+      setError("Can't send yet — Aetheris is still starting. Check Bluetooth is on.");
       return;
     }
     try {
@@ -223,20 +226,20 @@ export default function ChatScreen() {
     }
   };
 
-  const sendText = async () => {
+  const sendText = () => {
     const text = input.trim();
     if (!text) return;
     setInput('');
-    await send({kind: 'text', text});
+    send({kind: 'text', text});
   };
 
-  const attachImage = async () => {
+  const attachPhoto = async () => {
     try {
       setBusy(true);
       const img = await AetherisBridge.pickImage(1024, 60);
       if (!img) return;
       if (img.data.length > MAX_MEDIA_BASE64) {
-        setError('That photo is too large even after compression.');
+        setError('That photo is too large to send.');
         return;
       }
       const caption = input.trim();
@@ -253,22 +256,22 @@ export default function ChatScreen() {
     }
   };
 
-  const toggleRecording = async () => {
-    if (recording === null) {
-      if (!(await requestMicrophone())) {
-        setError('Microphone permission is needed for voice notes.');
-        return;
-      }
-      try {
-        await AetherisBridge.startRecording();
-        setRecordElapsed(0);
-        setRecording(Date.now());
-      } catch (e: any) {
-        setError(e?.message ?? 'Could not start recording');
-      }
+  const startRecording = async () => {
+    if (!(await requestMicrophone())) {
+      setError('Allow the microphone to send voice messages.');
       return;
     }
-    setRecording(null);
+    try {
+      await AetherisBridge.startRecording();
+      setElapsed(0);
+      setRecordingSince(Date.now());
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not start recording');
+    }
+  };
+
+  const finishRecording = async () => {
+    setRecordingSince(null);
     try {
       const audio = await AetherisBridge.stopRecording();
       await send({kind: 'audio', media: {mime: audio.mime, data: audio.data, durationMs: audio.durationMs}});
@@ -278,7 +281,7 @@ export default function ChatScreen() {
   };
 
   const cancelRecording = () => {
-    setRecording(null);
+    setRecordingSince(null);
     AetherisBridge.cancelRecording().catch(() => undefined);
   };
 
@@ -293,95 +296,86 @@ export default function ChatScreen() {
     AetherisBridge.playAudio(m.id, m.media.data).catch(() => setPlayingId(null));
   };
 
-  const showInfo = (m: ChatMessage) => {
-    const statusLine = m.isOutbound
-      ? m.status === 'delivered'
-        ? 'Delivered'
-        : m.status === 'sent'
-        ? 'Left this phone — waiting for delivery receipt'
-        : m.status === 'pending'
-        ? 'Waiting for someone in range'
-        : 'Expired before it could be delivered'
-      : 'Received';
-    const route =
-      m.isOutbound && m.status !== 'delivered'
-        ? ''
-        : m.route
-        ? `\n\nRoute:\n${routeDescription(m, selfId)}`
-        : '';
-    Alert.alert('Message info', `${statusLine}${route}`);
+  const info = (m: ChatMessage) => {
+    const via = m.route?.length ?? 0;
+    const viaText = via > 0 ? `\n\nIt reached them through ${via} other phone${via === 1 ? '' : 's'} nearby.` : '';
+    let text: string;
+    if (!m.isOutbound) text = `Received at ${formatClock(m.createdAt)}.${viaText}`;
+    else if (m.status === 'delivered')
+      text = m.recipientCount
+        ? `Delivered to ${m.deliveredCount} of ${m.recipientCount}.`
+        : `Delivered.${viaText}`;
+    else if (m.status === 'failed') text = "This message couldn't be delivered.";
+    else
+      text = isGroup
+        ? `Delivered to ${m.deliveredCount ?? 0} of ${m.recipientCount ?? 0}. The rest get it when they're nearby.`
+        : `Not delivered yet. ${title} will get it when they're nearby.`;
+    Alert.alert('Message info', text);
   };
 
-  // Android dialogs show at most three buttons.
-  const openMenu = (m: ChatMessage) => {
+  const menu = (m: ChatMessage) => {
     const del = {
       text: 'Delete',
       style: 'destructive' as const,
       onPress: () =>
-        Alert.alert(
-          'Delete message?',
-          m.isOutbound && m.status !== 'delivered'
-            ? "It's deleted from this phone and won't be sent any further. Copies already handed to other phones may still arrive."
-            : 'It is deleted from this phone only.',
-          [
-            {text: 'Cancel', style: 'cancel'},
-            {text: 'Delete', style: 'destructive', onPress: () => deleteMessage(m.id)},
-          ],
-        ),
+        Alert.alert('Delete message?', 'It will be removed from this phone.', [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Delete', style: 'destructive', onPress: () => deleteMessage(m.id)},
+        ]),
     };
-    if (m.status === 'failed' && m.isOutbound) {
-      Alert.alert('Not delivered', 'This message expired before it reached anyone.', [
+    if (m.isOutbound && m.status === 'failed') {
+      Alert.alert('Not delivered', undefined, [
         {text: 'Cancel', style: 'cancel'},
         del,
-        {text: 'Send again', onPress: () => retryMessage(m.id).catch(e => setError(String(e?.message ?? e)))},
+        {text: 'Try again', onPress: () => retryMessage(m.id).catch(e => setError(String(e?.message ?? e)))},
       ]);
       return;
     }
     Alert.alert('Message', undefined, [
       {text: 'Cancel', style: 'cancel'},
       del,
-      {text: 'Info', onPress: () => showInfo(m)},
+      {text: 'Info', onPress: () => info(m)},
     ]);
   };
 
-  type Item = {type: 'day'; key: string; ts: number} | {type: 'msg'; key: string; m: ChatMessage; showSender: boolean};
+  type Item =
+    | {type: 'day'; key: string; ts: number}
+    | {type: 'msg'; key: string; m: ChatMessage; first: boolean; last: boolean; showSender: boolean};
   const items: Item[] = [];
   messages.forEach((m, i) => {
     const prev = messages[i - 1];
-    if (!prev || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString()) {
-      items.push({type: 'day', key: `day-${m.id}`, ts: m.createdAt});
-    }
-    items.push({type: 'msg', key: m.id, m, showSender: isGroup && (!prev || prev.senderId !== m.senderId)});
+    const next = messages[i + 1];
+    const newDay = !prev || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString();
+    if (newDay) items.push({type: 'day', key: `day-${m.id}`, ts: m.createdAt});
+    const sameAsPrev = !newDay && prev && prev.senderId === m.senderId && m.createdAt - prev.createdAt < 120000;
+    const sameAsNext =
+      next &&
+      next.senderId === m.senderId &&
+      next.createdAt - m.createdAt < 120000 &&
+      new Date(next.createdAt).toDateString() === new Date(m.createdAt).toDateString();
+    items.push({type: 'msg', key: m.id, m, first: !sameAsPrev, last: !sameAsNext, showSender: isGroup && !sameAsPrev});
   });
 
+  const recording = recordingSince !== null;
+
   return (
-    <KeyboardAvoidingView
-      style={{flex: 1, backgroundColor: t.bg}}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={[styles.header, {borderBottomColor: t.border}]}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={[styles.back, {backgroundColor: t.surfaceAlt, borderColor: t.border}]}>
-          <Icon name="arrow-left" size={18} color={t.text} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={{flex: 1}}
-          disabled={isGroup}
-          onPress={() => navigation.navigate('Contact', {id: conversationId})}>
-          <Text style={[styles.title, {color: t.text}]} numberOfLines={1}>
-            {conversationTitle(conversationId)}
-          </Text>
-          <Text style={[styles.subtitle, {color: t.textMuted}]} numberOfLines={1}>
-            {subtitle}
-          </Text>
-        </TouchableOpacity>
-        {isGroup ? (
-          <Icon name="users" size={16} color={t.textMuted} />
-        ) : verified ? (
-          <Icon name="shield" size={16} color={t.successText} />
-        ) : (
-          <Icon name="lock" size={16} color={t.textMuted} />
-        )}
+    <KeyboardAvoidingView style={{flex: 1, backgroundColor: t.chatBg}} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* Header */}
+      <View style={[styles.header, {backgroundColor: t.bg, borderBottomColor: t.separator}]}>
+        <IconButton name="chevron-back" size={26} onPress={() => navigation.goBack()} />
+        <Pressable
+          style={styles.headerWho}
+          onPress={() => navigation.navigate('ContactInfo', {conversationId})}>
+          <Avatar id={conversationId} name={title} size={40} online={nearby} group={isGroup} />
+          <View style={{flex: 1}}>
+            <Text style={[styles.headerName, {color: t.text}]} numberOfLines={1}>
+              {title}
+            </Text>
+            <Text style={[styles.headerSub, {color: nearby ? t.online : t.textMuted}]} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          </View>
+        </Pressable>
       </View>
 
       <FlatList
@@ -389,124 +383,146 @@ export default function ChatScreen() {
         data={items}
         keyExtractor={i => i.key}
         contentContainerStyle={styles.list}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({animated: true})}
-        ListEmptyComponent={
-          <View style={styles.emptyWrap}>
-            <Icon name="lock" size={22} color={t.textMuted} />
-            <Text style={[styles.emptyText, {color: t.textMuted}]}>
-              Messages are end-to-end encrypted. Phones that relay them can't read them.
+        onContentSizeChange={() => listRef.current?.scrollToEnd({animated: false})}
+        ListHeaderComponent={
+          <View style={[styles.notice, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
+            <Icon name="lock-closed" size={13} color={t.textMuted} />
+            <Text style={[styles.noticeText, {color: t.textSub}]}>
+              Messages are end-to-end encrypted and sent directly between nearby phones. No internet
+              involved.
             </Text>
           </View>
         }
         renderItem={({item}) =>
           item.type === 'day' ? (
-            <Text style={[styles.day, {color: t.textMuted}]}>{formatDay(item.ts)}</Text>
+            <View style={styles.dayWrap}>
+              <Text style={[styles.day, {color: t.textSub, backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
+                {dayLabel(item.ts)}
+              </Text>
+            </View>
           ) : (
             <Bubble
               m={item.m}
+              first={item.first}
+              last={item.last}
               showSender={item.showSender}
-              playingId={playingId}
-              onPlay={play}
-              onOpenImage={setViewer}
-              onInfo={openMenu}
+              playing={playingId === item.m.id}
+              onPlay={() => play(item.m)}
+              onImage={setViewer}
+              onLongPress={() => menu(item.m)}
             />
           )
         }
       />
 
-      {error !== '' && (
-        <TouchableOpacity
-          onPress={() => setError('')}
-          style={[styles.error, {backgroundColor: t.errorBg, borderColor: t.errorBorder}]}>
-          <Text style={{color: t.errorText, fontFamily: Font.regular, fontSize: 12}}>{error}</Text>
-        </TouchableOpacity>
+      {!isGroup && !nearby && messages.some(m => m.isOutbound && m.status !== 'delivered' && m.status !== 'failed') && (
+        <View style={[styles.away, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
+          <Icon name="time-outline" size={15} color={t.textSub} />
+          <Text style={[styles.awayText, {color: t.textSub}]}>
+            {title} isn't nearby. Your messages will be delivered when they are.
+          </Text>
+        </View>
       )}
 
-      <View style={[styles.composer, {backgroundColor: t.surface, borderTopColor: t.border}]}>
-        {recording !== null ? (
+      {error !== '' && (
+        <Pressable onPress={() => setError('')} style={[styles.error, {backgroundColor: t.dangerSoft}]}>
+          <Text style={[styles.errorText, {color: t.danger}]}>{error}</Text>
+          <Icon name="close" size={16} color={t.danger} />
+        </Pressable>
+      )}
+
+      {/* Composer */}
+      <View style={[styles.composer, {backgroundColor: t.bg}]}>
+        {recording ? (
           <>
-            <TouchableOpacity onPress={cancelRecording} style={styles.iconButton}>
-              <Icon name="x" size={20} color={t.errorText} />
-            </TouchableOpacity>
-            <View style={styles.recordingInfo}>
-              <View style={[styles.recDot, {backgroundColor: t.errorText}]} />
-              <Text style={{color: t.text, fontFamily: Font.medium}}>
-                Recording {formatDuration(recordElapsed)}
-              </Text>
+            <IconButton name="trash-outline" color={t.danger} onPress={cancelRecording} />
+            <View style={[styles.recording, {backgroundColor: t.surface}]}>
+              <View style={[styles.recDot, {backgroundColor: t.danger}]} />
+              <Text style={[styles.recText, {color: t.text}]}>{duration(elapsed)}</Text>
+              <Text style={[styles.recHint, {color: t.textMuted}]}>Recording…</Text>
             </View>
-            <TouchableOpacity onPress={toggleRecording} style={[styles.sendButton, {backgroundColor: t.accent}]}>
-              <Icon name="send" size={16} color="#fff" />
-            </TouchableOpacity>
+            <IconButton name="send" size={20} filled onPress={finishRecording} style={styles.sendButton} />
           </>
         ) : (
           <>
-            <TouchableOpacity onPress={attachImage} style={styles.iconButton} disabled={busy}>
-              {busy ? <ActivityIndicator color={t.accent} /> : <Icon name="image" size={20} color={t.textSub} />}
-            </TouchableOpacity>
-            <TextInput
-              style={[styles.input, {color: t.text, backgroundColor: t.surfaceAlt, borderColor: t.border}]}
-              placeholder="Message"
-              placeholderTextColor={t.textMuted}
-              value={input}
-              onChangeText={setInput}
-              multiline
-              maxLength={4000}
-            />
+            <View style={[styles.inputWrap, {backgroundColor: t.surface}]}>
+              <TextInput
+                style={[styles.input, {color: t.text}]}
+                placeholder="Message"
+                placeholderTextColor={t.textMuted}
+                value={input}
+                onChangeText={setInput}
+                multiline
+                maxLength={4000}
+              />
+              {busy ? (
+                <ActivityIndicator color={t.primary} style={{marginRight: 12}} />
+              ) : (
+                <IconButton name="camera-outline" size={23} color={t.textSub} onPress={attachPhoto} style={styles.inlineIcon} />
+              )}
+            </View>
             {input.trim() ? (
-              <TouchableOpacity onPress={sendText} style={[styles.sendButton, {backgroundColor: t.accent}]}>
-                <Icon name="send" size={16} color="#fff" />
-              </TouchableOpacity>
+              <IconButton name="send" size={20} filled onPress={sendText} style={styles.sendButton} />
             ) : (
-              <TouchableOpacity onPress={toggleRecording} style={[styles.sendButton, {backgroundColor: t.accent}]}>
-                <Icon name="mic" size={16} color="#fff" />
-              </TouchableOpacity>
+              <IconButton name="mic" size={22} filled onPress={startRecording} style={styles.sendButton} />
             )}
           </>
         )}
       </View>
 
       <Modal visible={viewer !== null} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
-        <TouchableOpacity style={styles.viewer} activeOpacity={1} onPress={() => setViewer(null)}>
+        <Pressable style={styles.viewer} onPress={() => setViewer(null)}>
           {viewer && <Image source={{uri: viewer}} style={styles.viewerImage} resizeMode="contain" />}
-        </TouchableOpacity>
+        </Pressable>
       </Modal>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 48, paddingBottom: 12, paddingHorizontal: 16, borderBottomWidth: 1},
-  back: {width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1},
-  title: {fontSize: 17, fontFamily: Font.semiBold},
-  subtitle: {fontSize: 12, fontFamily: Font.regular, marginTop: 1},
-  list: {padding: 12, paddingBottom: 20, flexGrow: 1},
-  emptyWrap: {flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 40},
-  emptyText: {fontSize: 13, fontFamily: Font.regular, textAlign: 'center', lineHeight: 19},
-  day: {textAlign: 'center', fontSize: 11, fontFamily: Font.medium, marginVertical: 10},
-  row: {flexDirection: 'row', marginVertical: 2},
-  rowOut: {justifyContent: 'flex-end'},
-  rowIn: {justifyContent: 'flex-start'},
-  bubble: {maxWidth: '80%', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8},
-  imageBubble: {padding: 4, width: '72%'},
-  sender: {fontSize: 12, fontFamily: Font.semiBold, marginBottom: 2},
-  image: {width: '100%', borderRadius: 14},
-  caption: {paddingHorizontal: 8},
-  text: {fontSize: 15, fontFamily: Font.regular, lineHeight: 21},
-  audioRow: {flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 160, paddingVertical: 4},
-  audioBar: {flex: 1, height: 3, borderRadius: 2, opacity: 0.6},
-  audioTime: {fontSize: 12, fontFamily: Font.medium},
-  meta: {flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4, marginTop: 3},
-  metaText: {fontSize: 10, fontFamily: Font.regular},
-  ticks: {flexDirection: 'row', alignItems: 'center'},
-  secondTick: {marginLeft: -6},
-  groupCount: {fontSize: 10, fontFamily: Font.medium, marginRight: 3},
-  error: {marginHorizontal: 12, marginBottom: 6, padding: 8, borderRadius: 10, borderWidth: 1},
-  composer: {flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 10, borderTopWidth: 1},
-  iconButton: {width: 40, height: 40, alignItems: 'center', justifyContent: 'center'},
-  input: {flex: 1, minHeight: 40, maxHeight: 120, borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 9, fontSize: 15, fontFamily: Font.regular},
-  sendButton: {width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center'},
-  recordingInfo: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, height: 40},
-  recDot: {width: 8, height: 8, borderRadius: 4},
-  viewer: {flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center'},
+  header: {flexDirection: 'row', alignItems: 'center', paddingTop: 40, paddingBottom: 8, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth},
+  headerWho: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 11},
+  headerName: {fontFamily: Font.semiBold, fontSize: 16.5},
+  headerSub: {fontFamily: Font.medium, fontSize: 12.5, marginTop: 1},
+  list: {paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12, flexGrow: 1},
+  notice: {flexDirection: 'row', gap: 8, alignSelf: 'center', maxWidth: 320, padding: 10, paddingHorizontal: 12, borderRadius: 12, marginBottom: 12, alignItems: 'flex-start'},
+  noticeText: {flex: 1, fontFamily: Font.regular, fontSize: 12, lineHeight: 17, textAlign: 'center'},
+  dayWrap: {alignItems: 'center', marginVertical: 10},
+  day: {fontFamily: Font.semiBold, fontSize: 12, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 10, overflow: 'hidden'},
+  row: {flexDirection: 'row', marginVertical: 1.5},
+  rowOut: {justifyContent: 'flex-end', paddingLeft: 56},
+  rowIn: {justifyContent: 'flex-start', paddingRight: 56},
+  bubble: {paddingHorizontal: 12, paddingTop: 8, paddingBottom: 7, maxWidth: '100%'},
+  inShadow: {shadowColor: '#0F1419', shadowOpacity: 0.06, shadowRadius: 2, shadowOffset: {width: 0, height: 1}, elevation: 1},
+  imageBubble: {padding: 3, width: 260},
+  sender: {fontFamily: Font.semiBold, fontSize: 13, marginBottom: 2},
+  image: {width: '100%'},
+  caption: {paddingHorizontal: 9, paddingTop: 6},
+  text: {fontFamily: Font.regular, fontSize: 15.5, lineHeight: 21.5, flexShrink: 1},
+  textRow: {flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end'},
+  inlineMeta: {marginLeft: 10, marginBottom: -1, flexGrow: 0},
+  metaWrap: {position: 'absolute', right: 10, bottom: 6},
+  metaOnImage: {right: 10, bottom: 8, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1},
+  meta: {flexDirection: 'row', alignItems: 'center', gap: 3},
+  metaText: {fontFamily: Font.medium, fontSize: 11},
+  audio: {flexDirection: 'row', alignItems: 'center', gap: 10, width: 230, paddingBottom: 14},
+  playButton: {width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center'},
+  wave: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 28},
+  waveBar: {flex: 1, borderRadius: 2},
+  audioTime: {position: 'absolute', left: 48, bottom: -2, fontFamily: Font.medium, fontSize: 11},
+  away: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, borderRadius: 12},
+  awayText: {flex: 1, fontFamily: Font.regular, fontSize: 12.5, lineHeight: 17},
+  error: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, borderRadius: 12},
+  errorText: {flex: 1, fontFamily: Font.medium, fontSize: 13},
+  composer: {flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 10},
+  inputWrap: {flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 22, minHeight: 44},
+  input: {flex: 1, maxHeight: 130, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11, fontFamily: Font.regular, fontSize: 15.5},
+  inlineIcon: {width: 40, height: 44},
+  sendButton: {width: 44, height: 44, borderRadius: 22},
+  recording: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: 44, borderRadius: 22, paddingHorizontal: 16},
+  recDot: {width: 10, height: 10, borderRadius: 5},
+  recText: {fontFamily: Font.semiBold, fontSize: 15},
+  recHint: {fontFamily: Font.regular, fontSize: 14},
+  viewer: {flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', justifyContent: 'center'},
   viewerImage: {width: '100%', height: '100%'},
 });

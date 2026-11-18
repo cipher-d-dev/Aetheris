@@ -28,6 +28,7 @@ export interface Conversation {
   title: string;
   isGroup: boolean;
   lastMessage: string;
+  lastOutboundStatus?: ChatMessage['status'];
   lastTime: number;
   unread: number;
 }
@@ -67,7 +68,7 @@ export function conversationTitle(id: string): string {
 
 function previewText(kind: string, text: string): string {
   if (kind === 'image') return text ? `📷 ${text}` : '📷 Photo';
-  if (kind === 'audio') return '🎤 Voice note';
+  if (kind === 'audio') return '🎤 Voice message';
   return text;
 }
 
@@ -96,6 +97,7 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
         title: conversationTitle(c.id),
         isGroup: isGroupConversation(c.id),
         lastMessage: previewText(c.lastKind, c.lastText),
+        lastOutboundStatus: c.lastOutboundStatus,
         lastTime: c.lastTime,
         unread: c.id === get().activeConversation ? 0 : c.unread,
       }));

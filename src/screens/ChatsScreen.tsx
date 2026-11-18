@@ -1,0 +1,240 @@
+import React, {useEffect, useMemo, useState} from 'react';
+import {View, Text, StyleSheet, FlatList, Pressable, TextInput, Alert} from 'react-native';
+import {useNavigation} from '@react-navigation/native';
+import {openSettings} from 'react-native-permissions';
+import {Font, Type, useThemeStore} from '../theme';
+import {Conversation, useMessagesStore} from '../store/messagesStore';
+import {useMeshService} from '../store/meshService';
+import {useIdentityStore} from '../store/identityStore';
+import Avatar from '../ui/Avatar';
+import {Icon} from '../ui/Icon';
+import IconButton from '../ui/IconButton';
+import Button from '../ui/Button';
+import {formatListTime, isNearby} from '../ui/presence';
+
+function ChatRow({item, nearby, onPress, onLongPress}: {
+  item: Conversation;
+  nearby: boolean;
+  onPress: () => void;
+  onLongPress: () => void;
+}) {
+  const {theme: t} = useThemeStore();
+  const unread = item.unread > 0;
+  return (
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={({pressed}) => [styles.row, pressed && {backgroundColor: t.surface}]}>
+      <Avatar id={item.id} name={item.title} size={54} online={nearby} group={item.isGroup} />
+      <View style={styles.rowBody}>
+        <View style={styles.rowLine}>
+          <Text style={[styles.name, {color: t.text}]} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <Text style={[styles.time, {color: unread ? t.primary : t.textMuted}]}>
+            {item.lastTime ? formatListTime(item.lastTime) : ''}
+          </Text>
+        </View>
+        <View style={styles.rowLine}>
+          {item.lastOutboundStatus && (
+            <Icon
+              name={
+                item.lastOutboundStatus === 'pending'
+                  ? 'time-outline'
+                  : item.lastOutboundStatus === 'failed'
+                  ? 'alert-circle'
+                  : item.lastOutboundStatus === 'delivered'
+                  ? 'checkmark-done'
+                  : 'checkmark'
+              }
+              size={16}
+              color={
+                item.lastOutboundStatus === 'delivered'
+                  ? t.primary
+                  : item.lastOutboundStatus === 'failed'
+                  ? t.danger
+                  : t.textMuted
+              }
+              style={{marginRight: -4}}
+            />
+          )}
+          <Text
+            style={[styles.preview, {color: unread ? t.text : t.textSub}, unread && {fontFamily: Font.medium}]}
+            numberOfLines={1}>
+            {item.lastMessage || ' '}
+          </Text>
+          {unread && (
+            <View style={[styles.badge, {backgroundColor: t.primary}]}>
+              <Text style={styles.badgeText}>{item.unread > 99 ? '99+' : item.unread}</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+/** One quiet line under the title: how many people are around, or what's wrong. */
+function StatusLine() {
+  const {theme: t} = useThemeStore();
+  const identity = useIdentityStore(s => s.identity);
+  const {status, permission, bluetoothOn, routes, bootstrap} = useMeshService();
+
+  let problem: {text: string; action: string; onPress: () => void} | null = null;
+  if (permission === 'blocked') {
+    problem = {text: 'Aetheris needs access to nearby devices.', action: 'Settings', onPress: () => openSettings()};
+  } else if (permission === 'denied') {
+    problem = {
+      text: 'Allow access to find people nearby.',
+      action: 'Allow',
+      onPress: () => identity && bootstrap(identity.publicKeyBase58),
+    };
+  } else if (!bluetoothOn) {
+    problem = {
+      text: 'Turn on Bluetooth to reach people nearby.',
+      action: 'Retry',
+      onPress: () => identity && bootstrap(identity.publicKeyBase58),
+    };
+  }
+
+  if (problem) {
+    return (
+      <Pressable onPress={problem.onPress} style={[styles.problem, {backgroundColor: t.warningSoft}]}>
+        <Icon name="alert-circle" size={18} color={t.warningText} />
+        <Text style={[styles.problemText, {color: t.warningText}]}>{problem.text}</Text>
+        <Text style={[styles.problemAction, {color: t.warningText}]}>{problem.action}</Text>
+      </Pressable>
+    );
+  }
+
+  const count = routes.length;
+  return (
+    <View style={styles.status}>
+      <View style={[styles.statusDot, {backgroundColor: count > 0 ? t.online : t.textMuted}]} />
+      <Text style={[styles.statusText, {color: t.textSub}]}>
+        {status !== 'running'
+          ? 'Starting…'
+          : count === 0
+          ? 'Looking for people nearby…'
+          : `${count} ${count === 1 ? 'person' : 'people'} nearby`}
+      </Text>
+    </View>
+  );
+}
+
+export default function ChatsScreen() {
+  const {theme: t} = useThemeStore();
+  const navigation = useNavigation<any>();
+  const conversations = useMessagesStore(s => s.conversations);
+  const {loadConversations, deleteConversation} = useMessagesStore.getState();
+  const routes = useMeshService(s => s.routes);
+  const [query, setQuery] = useState('');
+
+  useEffect(() => navigation.addListener('focus', loadConversations), [navigation, loadConversations]);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? conversations.filter(c => c.title.toLowerCase().includes(q)) : conversations;
+  }, [conversations, query]);
+
+  const confirmDelete = (c: Conversation) =>
+    Alert.alert(`Delete chat with ${c.title}?`, 'Messages are deleted from this phone.', [
+      {text: 'Cancel', style: 'cancel'},
+      {text: 'Delete', style: 'destructive', onPress: () => deleteConversation(c.id)},
+    ]);
+
+  return (
+    <View style={[styles.container, {backgroundColor: t.bg}]}>
+      <View style={styles.header}>
+        <Text style={[Type.largeTitle, {color: t.text}]}>Chats</Text>
+        <IconButton name="create-outline" onPress={() => navigation.navigate('NewMessage')} />
+      </View>
+      <StatusLine />
+
+      {conversations.length > 0 && (
+        <View style={[styles.search, {backgroundColor: t.surface}]}>
+          <Icon name="search" size={18} color={t.textMuted} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search"
+            placeholderTextColor={t.textMuted}
+            style={[styles.searchInput, {color: t.text}]}
+          />
+        </View>
+      )}
+
+      {conversations.length === 0 ? (
+        <View style={styles.empty}>
+          <View style={[styles.emptyArt, {backgroundColor: t.primarySoft}]}>
+            <Icon name="chatbubbles" size={48} color={t.primary} />
+          </View>
+          <Text style={[Type.title, {color: t.text, textAlign: 'center'}]}>No chats yet</Text>
+          <Text style={[styles.emptyText, {color: t.textSub}]}>
+            Message anyone around you who has Aetheris — no internet needed.
+          </Text>
+          <Button
+            title="Find people nearby"
+            icon="people"
+            onPress={() => navigation.navigate('NewMessage')}
+            style={{marginTop: 24, alignSelf: 'stretch'}}
+          />
+        </View>
+      ) : (
+        <FlatList
+          data={shown}
+          keyExtractor={c => c.id}
+          contentContainerStyle={{paddingBottom: 100}}
+          renderItem={({item}) => (
+            <ChatRow
+              item={item}
+              nearby={!item.isGroup && isNearby(item.id, routes)}
+              onPress={() => navigation.navigate('Chat', {conversationId: item.id})}
+              onLongPress={() => confirmDelete(item)}
+            />
+          )}
+        />
+      )}
+
+      {conversations.length > 0 && (
+        <Pressable
+          onPress={() => navigation.navigate('NewMessage')}
+          style={({pressed}) => [
+            styles.fab,
+            {backgroundColor: pressed ? t.primaryPressed : t.primary, shadowColor: t.primary},
+          ]}>
+          <Icon name="chatbubbles" size={24} color={t.onPrimary} />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {flex: 1},
+  header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 56},
+  status: {flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 20, marginTop: 2, marginBottom: 14},
+  statusDot: {width: 8, height: 8, borderRadius: 4},
+  statusText: {fontFamily: Font.medium, fontSize: 13.5},
+  problem: {flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 6, marginBottom: 14, padding: 12, borderRadius: 14},
+  problemText: {flex: 1, fontFamily: Font.medium, fontSize: 13.5},
+  problemAction: {fontFamily: Font.bold, fontSize: 13.5},
+  search: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 6, paddingHorizontal: 14, height: 42, borderRadius: 14},
+  searchInput: {flex: 1, fontFamily: Font.regular, fontSize: 15, paddingVertical: 0},
+  row: {flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 10},
+  rowBody: {flex: 1, gap: 3},
+  rowLine: {flexDirection: 'row', alignItems: 'center', gap: 8},
+  name: {flex: 1, fontFamily: Font.semiBold, fontSize: 16.5},
+  time: {fontFamily: Font.medium, fontSize: 12},
+  preview: {flex: 1, fontFamily: Font.regular, fontSize: 14.5},
+  badge: {minWidth: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6},
+  badgeText: {color: '#fff', fontFamily: Font.bold, fontSize: 11.5},
+  empty: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36, paddingBottom: 80},
+  emptyArt: {width: 108, height: 108, borderRadius: 54, alignItems: 'center', justifyContent: 'center', marginBottom: 22},
+  emptyText: {fontFamily: Font.regular, fontSize: 15, lineHeight: 22, textAlign: 'center', marginTop: 8},
+  fab: {
+    position: 'absolute', right: 20, bottom: 24, width: 60, height: 60, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
+    elevation: 6, shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: {width: 0, height: 6},
+  },
+});
