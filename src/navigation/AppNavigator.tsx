@@ -11,9 +11,10 @@ import MessagesScreen from '../screens/MessagesScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import ChatScreen from '../screens/ChatScreen';
 import NewChatScreen from '../screens/NewChatScreen';
+import NewGroupScreen from '../screens/NewGroupScreen';
 
 // ─── Stack for the Messages tab ───────────────────────────────────────────────
-// MessagesScreen (conversation list) → NewChatScreen → ChatScreen
+// MessagesScreen (conversation list) → NewChat / NewGroup → ChatScreen
 
 const MessagesStack = createNativeStackNavigator();
 
@@ -28,6 +29,7 @@ function MessagesStackNavigator() {
             }}>
             <MessagesStack.Screen name="ConversationList" component={MessagesScreen} />
             <MessagesStack.Screen name="NewChat" component={NewChatScreen} />
+            <MessagesStack.Screen name="NewGroup" component={NewGroupScreen} />
             <MessagesStack.Screen name="Chat" component={ChatScreen} />
         </MessagesStack.Navigator>
     );
@@ -78,7 +80,7 @@ export default function AppNavigator() {
                 },
             })}>
             <Tab.Screen name="Identity" component={IdentityScreen} />
-            <Tab.Screen name="Nearby" component={NearbyScreen} />
+            <Tab.Screen name="Nearby" component={NearbyScreen} options={{title: 'Mesh'}} />
             <Tab.Screen
                 name="Messages"
                 component={MessagesStackNavigator}

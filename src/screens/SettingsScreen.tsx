@@ -1,5 +1,6 @@
-import React from 'react';
-import { View, Text, StyleSheet, Switch, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Switch, TouchableOpacity, TextInput } from 'react-native';
+import { POWER_PROFILES, PowerMode, useMeshService } from '../store/meshService';
 import Icon from 'react-native-vector-icons/Feather';
 import { useThemeStore, Font } from '../theme';
 import { useIdentityStore } from '../store/identityStore';
@@ -53,6 +54,9 @@ function SectionLabel({ label }: { label: string }) {
 export default function SettingsScreen() {
     const { theme: t, isDark, toggle } = useThemeStore();
     const { identity } = useIdentityStore();
+    const { alias, setAlias, powerMode, setPowerMode, status, neighbours, routes, carrying } = useMeshService();
+    const [aliasDraft, setAliasDraft] = useState(alias);
+    useEffect(() => setAliasDraft(alias), [alias]);
 
     return (
         <ScrollView style={[styles.container, { backgroundColor: t.bg }]} contentContainerStyle={{ paddingBottom: 70 }}>
@@ -89,47 +93,67 @@ export default function SettingsScreen() {
                 sublabel={identity?.shortId ?? '—'}
                 right={<View />}
             />
-            <SettingRow
-                icon="tag"
-                label="Set Alias"
-                sublabel="Coming soon — Day 5"
-                right={
-                    <View style={[styles.comingSoonBadge, { backgroundColor: t.accentSoft }]}>
-                        <Text style={[styles.comingSoonText, { color: t.accent }]}>Soon</Text>
-                    </View>
-                }
-            />
+            <View style={[styles.row, { backgroundColor: t.surface, borderColor: t.border }]}>
+                <View style={[styles.rowIcon, { backgroundColor: t.accentSoft }]}>
+                    <Icon name="tag" size={16} color={t.accent} />
+                </View>
+                <View style={styles.rowText}>
+                    <Text style={[styles.rowLabel, { color: t.text }]}>Display name</Text>
+                    <TextInput
+                        style={[styles.aliasInput, { color: t.text, borderColor: t.border }]}
+                        placeholder="Shown to people you message"
+                        placeholderTextColor={t.textMuted}
+                        value={aliasDraft}
+                        onChangeText={setAliasDraft}
+                        onEndEditing={() => setAlias(aliasDraft)}
+                        maxLength={32}
+                    />
+                </View>
+                {aliasDraft.trim() !== alias && (
+                    <TouchableOpacity onPress={() => setAlias(aliasDraft)}>
+                        <Text style={[styles.saveText, { color: t.accent }]}>Save</Text>
+                    </TouchableOpacity>
+                )}
+            </View>
 
             {/* Network */}
+            <SectionLabel label="BATTERY" />
+            {(Object.keys(POWER_PROFILES) as PowerMode[]).map(mode => (
+                <SettingRow
+                    key={mode}
+                    icon={mode === 'performance' ? 'zap' : mode === 'balanced' ? 'activity' : 'battery'}
+                    label={POWER_PROFILES[mode].label}
+                    sublabel={POWER_PROFILES[mode].description}
+                    onPress={() => setPowerMode(mode)}
+                    right={
+                        <Icon
+                            name={powerMode === mode ? 'check-circle' : 'circle'}
+                            size={18}
+                            color={powerMode === mode ? t.accent : t.textMuted}
+                        />
+                    }
+                />
+            ))}
+
             <SectionLabel label="NETWORK" />
             <SettingRow
-                icon="bluetooth"
-                label="BLE Discovery"
-                sublabel="Coming soon — Day 2"
-                right={
-                    <View style={[styles.comingSoonBadge, { backgroundColor: t.accentSoft }]}>
-                        <Text style={[styles.comingSoonText, { color: t.accent }]}>Soon</Text>
-                    </View>
+                icon="radio"
+                label="Mesh radio"
+                sublabel={
+                    status === 'running'
+                        ? `On · ${neighbours.length} linked · ${routes.length} reachable · carrying ${carrying}`
+                        : status === 'starting' ? 'Starting…' : 'Off — see the Mesh tab'
                 }
-            />
-            <SettingRow
-                icon="wifi"
-                label="Wi-Fi Direct Transfer"
-                sublabel="Coming soon — Day 3"
-                right={
-                    <View style={[styles.comingSoonBadge, { backgroundColor: t.accentSoft }]}>
-                        <Text style={[styles.comingSoonText, { color: t.accent }]}>Soon</Text>
-                    </View>
-                }
+                right={<View />}
             />
 
             {/* About */}
             <SectionLabel label="ABOUT" />
             <View style={[styles.aboutCard, { backgroundColor: t.surface, borderColor: t.border }]}>
                 <Text style={[styles.aboutTitle, { color: t.text }]}>Aetheris</Text>
-                <Text style={[styles.aboutVersion, { color: t.textMuted }]}>Version 0.1.0 — Day 1 Build</Text>
+                <Text style={[styles.aboutVersion, { color: t.textMuted }]}>Version 1.0.0</Text>
                 <Text style={[styles.aboutDesc, { color: t.textSub }]}>
-                    A decentralised, offline-first mesh messaging app.{'\n'}
+                    Offline messaging that hops phone to phone over Bluetooth and Wi-Fi.{'\n'}
                     No internet. No servers. No accounts.
                 </Text>
             </View>
@@ -162,6 +186,12 @@ const styles = StyleSheet.create({
     rowText: { flex: 1 },
     rowLabel: { fontSize: 15, fontFamily: Font.medium },
     rowSublabel: { fontSize: 12, fontFamily: Font.regular, marginTop: 1 },
+
+    aliasInput: {
+        fontSize: 14, fontFamily: Font.regular, borderBottomWidth: 1,
+        paddingVertical: 4, paddingHorizontal: 0, marginTop: 2,
+    },
+    saveText: { fontSize: 13, fontFamily: Font.bold },
 
     comingSoonBadge: {
         borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3,

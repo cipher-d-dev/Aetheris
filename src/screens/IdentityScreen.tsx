@@ -93,7 +93,7 @@ export default function IdentityScreen() {
 
   useEffect(() => {
     initialize();
-  }, []);
+  }, [initialize]);
 
   const showAlert = (
     title: string,

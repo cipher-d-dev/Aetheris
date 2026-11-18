@@ -1,3 +1,7 @@
+/**
+ * Typed wrapper around the Kotlin AetherisNativeModule
+ * (android/app/src/main/java/com/aetheris/AetherisModule.kt).
+ */
 import {
   NativeModules,
   NativeEventEmitter,
@@ -8,93 +12,83 @@ const {AetherisNativeModule} = NativeModules;
 
 if (!AetherisNativeModule) {
   throw new Error(
-    'AetherisNativeModule not found. Did you rebuild after adding the Kotlin files?',
+    'AetherisNativeModule not found. Rebuild the Android app (npx react-native run-android).',
   );
 }
 
 const emitter = new NativeEventEmitter(AetherisNativeModule);
 
-export interface NativePeer {
-  id: string;
-  rssi: number;
-  lastSeen: number;
+export interface PeerFoundEvent {
+  endpointId: string;
+  nodeId: string;
 }
-
-export type ConnectionState =
-  | 'connecting'
-  | 'connected'
-  | 'disconnected'
-  | 'failed'
-  | 'authenticating'
-  | 'authenticated';
-
-export interface ConnectionStateEvent {
-  peerId: string;
-  state: ConnectionState;
+export interface LinkUpEvent {
+  linkId: string;
+  nodeId: string;
 }
-
-export interface MessageReceivedEvent {
-  peerId: string;
-  data: string; // Base64 encoded bytes
+export interface FrameEvent {
+  linkId: string;
+  data: string;
+}
+export interface RadioErrorEvent {
+  code: string;
+  message: string;
+}
+export interface PickedImage {
+  data: string;
+  mime: string;
+  width: number;
+  height: number;
+}
+export interface RecordedAudio {
+  data: string;
+  mime: string;
+  durationMs: number;
 }
 
 export const AetherisBridge = {
-  // ─── Discovery (BLE) ───────────────────────────────────────────────────────
+  // ─── Radio ──────────────────────────────────────────────────────────────
+  start: (nodeId: string): Promise<void> => AetherisNativeModule.start(nodeId),
+  stop: (): Promise<void> => AetherisNativeModule.stop(),
+  isBluetoothEnabled: (): Promise<boolean> => AetherisNativeModule.isBluetoothEnabled(),
+  /** 0/0 = scan continuously. Otherwise scan onMs, rest offMs. */
+  setDiscoveryDutyCycle: (onMs: number, offMs: number): Promise<void> =>
+    AetherisNativeModule.setDiscoveryDutyCycle(onMs, offMs),
+  /** Native heartbeat (keeps running when the app is backgrounded). 0 = off. */
+  setTickInterval: (ms: number): Promise<void> => AetherisNativeModule.setTickInterval(ms),
+  sendFrame: (linkId: string, data: string): Promise<void> =>
+    AetherisNativeModule.sendFrame(linkId, data),
+  disconnect: (linkId: string): Promise<void> => AetherisNativeModule.disconnect(linkId),
 
-  startDiscovery: (nodeId: string): Promise<void> =>
-    AetherisNativeModule.startDiscovery(nodeId),
+  // ─── Media ──────────────────────────────────────────────────────────────
+  /** Resolves null if the user cancels. */
+  pickImage: (maxDim = 1024, quality = 60): Promise<PickedImage | null> =>
+    AetherisNativeModule.pickImage(maxDim, quality),
+  startRecording: (): Promise<void> => AetherisNativeModule.startRecording(),
+  stopRecording: (): Promise<RecordedAudio> => AetherisNativeModule.stopRecording(),
+  cancelRecording: (): Promise<void> => AetherisNativeModule.cancelRecording(),
+  playAudio: (id: string, data: string): Promise<void> =>
+    AetherisNativeModule.playAudio(id, data),
+  stopAudio: (): Promise<void> => AetherisNativeModule.stopAudio(),
 
-  stopDiscovery: (): Promise<void> => AetherisNativeModule.stopDiscovery(),
+  // ─── Notifications ──────────────────────────────────────────────────────
+  showMessageNotification: (title: string, body: string): Promise<boolean> =>
+    AetherisNativeModule.showMessageNotification(title, body),
 
-  isBluetoothEnabled: (): Promise<boolean> =>
-    AetherisNativeModule.isBluetoothEnabled(),
-
-  // ─── Connection (Wi-Fi Direct) ─────────────────────────────────────────────
-
-  /**
-   * Connect to a peer over Wi-Fi Direct.
-   * @param deviceAddress The Wi-Fi Direct MAC address of the peer
-   * @param peerId        The Aetheris node ID of the peer (from BLE)
-   */
-  connectToPeer: (deviceAddress: string, peerId: string): Promise<void> =>
-    AetherisNativeModule.connectToPeer(deviceAddress, peerId),
-
-  disconnectFromPeer: (peerId: string): Promise<void> =>
-    AetherisNativeModule.disconnectFromPeer(peerId),
-
-  /**
-   * Send raw bytes to a connected peer.
-   * @param peerId     Aetheris node ID
-   * @param base64Data Base64-encoded bytes to send
-   */
-  sendRawBytes: (peerId: string, base64Data: string): Promise<void> =>
-    AetherisNativeModule.sendRawBytes(peerId, base64Data),
-
-  getConnectedPeers: (): Promise<string[]> =>
-    AetherisNativeModule.getConnectedPeers(),
-
-  isConnectedTo: (peerId: string): Promise<boolean> =>
-    AetherisNativeModule.isConnectedTo(peerId),
-
-  // ─── BLE Events ────────────────────────────────────────────────────────────
-
-  onPeerDiscovered: (cb: (peer: NativePeer) => void): EmitterSubscription =>
-    emitter.addListener('AetherisPeerDiscovered', cb),
-
-  onPeerUpdated: (cb: (peer: NativePeer) => void): EmitterSubscription =>
-    emitter.addListener('AetherisPeerUpdated', cb),
-
-  onPeerLost: (cb: (data: {id: string}) => void): EmitterSubscription =>
+  // ─── Events ─────────────────────────────────────────────────────────────
+  onPeerFound: (cb: (e: PeerFoundEvent) => void): EmitterSubscription =>
+    emitter.addListener('AetherisPeerFound', cb),
+  onPeerLost: (cb: (e: {endpointId: string}) => void): EmitterSubscription =>
     emitter.addListener('AetherisPeerLost', cb),
-
-  // ─── Wi-Fi Direct Events ───────────────────────────────────────────────────
-
-  onConnectionStateChanged: (
-    cb: (event: ConnectionStateEvent) => void,
-  ): EmitterSubscription =>
-    emitter.addListener('AetherisConnectionStateChanged', cb),
-
-  onMessageReceived: (
-    cb: (event: MessageReceivedEvent) => void,
-  ): EmitterSubscription => emitter.addListener('AetherisMessageReceived', cb),
+  onLinkUp: (cb: (e: LinkUpEvent) => void): EmitterSubscription =>
+    emitter.addListener('AetherisLinkUp', cb),
+  onLinkDown: (cb: (e: {linkId: string}) => void): EmitterSubscription =>
+    emitter.addListener('AetherisLinkDown', cb),
+  onFrame: (cb: (e: FrameEvent) => void): EmitterSubscription =>
+    emitter.addListener('AetherisFrame', cb),
+  onRadioError: (cb: (e: RadioErrorEvent) => void): EmitterSubscription =>
+    emitter.addListener('AetherisRadioError', cb),
+  onTick: (cb: () => void): EmitterSubscription => emitter.addListener('AetherisTick', cb),
+  onAudioFinished: (cb: (e: {id: string}) => void): EmitterSubscription =>
+    emitter.addListener('AetherisAudioFinished', cb),
 };

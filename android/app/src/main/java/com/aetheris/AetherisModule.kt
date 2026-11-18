@@ -1,250 +1,319 @@
 package com.aetheris
 
-import com.facebook.react.bridge.*
-import com.facebook.react.modules.core.DeviceEventManagerModule
-import com.facebook.react.module.annotations.ReactModule
-import android.util.Base64
-import java.util.concurrent.ConcurrentHashMap
-import java.util.Timer
-import java.util.TimerTask
+import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.bluetooth.BluetoothManager
+import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.facebook.react.bridge.*
+import com.facebook.react.module.annotations.ReactModule
+import com.facebook.react.modules.core.DeviceEventManagerModule
+import java.util.concurrent.Executors
 
+/**
+ * JS bridge for Aetheris. Exposes:
+ *   - the radio (NearbyMeshManager): start/stop, send frames, duty cycle
+ *   - media (MediaHelper): pick + compress photo, record/play voice notes
+ *   - a "new message" notification
+ *
+ * Events emitted to JS:
+ *   AetherisPeerFound     {endpointId, nodeId}
+ *   AetherisPeerLost      {endpointId}
+ *   AetherisLinkUp        {linkId, nodeId}
+ *   AetherisLinkDown      {linkId}
+ *   AetherisFrame         {linkId, data}
+ *   AetherisRadioError    {code, message}
+ *   AetherisAudioFinished {id}
+ *   AetherisTick          {}   periodic heartbeat that drives routing adverts.
+ *                              JS timers pause in the background; this doesn't.
+ */
 @ReactModule(name = AetherisModule.NAME)
-class AetherisModule(private val reactContext: ReactApplicationContext)
-    : ReactContextBaseJavaModule(reactContext) {
+class AetherisModule(private val reactContext: ReactApplicationContext) :
+    ReactContextBaseJavaModule(reactContext), ActivityEventListener {
 
     companion object {
         const val NAME = "AetherisNativeModule"
-        private const val PEER_TIMEOUT_MS = 10_000L
-        private const val PEER_CHECK_INTERVAL_MS = 3_000L
+        private const val MESSAGE_CHANNEL_ID = "AetherisMessages"
     }
 
-    private val bleManager = BLEManager(reactContext)
+    private val worker = Executors.newSingleThreadExecutor()
+    private val media = MediaHelper(reactContext)
+    private var pickPromise: Promise? = null
+    private var pickMaxDim = 1024
+    private var pickQuality = 60
 
-    private val wifiDirectManager = WifiDirectManager(
-        context = reactContext,
-        onMessageReceived = { peerId, data ->
-            reactContext.runOnJSQueueThread {
-                val params = Arguments.createMap().apply {
-                    putString("peerId", peerId)
-                    putString("data", Base64.encodeToString(data, Base64.NO_WRAP))
-                }
-                sendEvent("AetherisMessageReceived", params)
-            }
-        },
-        onConnectionStateChanged = { peerId, state ->
-            reactContext.runOnJSQueueThread {
-                val params = Arguments.createMap().apply {
-                    putString("peerId", peerId)
-                    putString("state", state)
-                }
-                sendEvent("AetherisConnectionStateChanged", params)
-            }
+    private val tickHandler = Handler(Looper.getMainLooper())
+    private var tickMs = 0L
+    private val tick = object : Runnable {
+        override fun run() {
+            if (tickMs <= 0) return
+            emit("AetherisTick", Arguments.createMap())
+            tickHandler.postDelayed(this, tickMs)
         }
-    )
+    }
 
-    private val seenPeers = ConcurrentHashMap<String, Long>()
-    private var peerTimeoutTimer: Timer? = null
-    private var currentNodeId: String = ""
+    private val radio = NearbyMeshManager(reactContext, object : NearbyMeshManager.Listener {
+        override fun onPeerFound(endpointId: String, nodeId: String) =
+            emit("AetherisPeerFound", Arguments.createMap().apply {
+                putString("endpointId", endpointId)
+                putString("nodeId", nodeId)
+            })
+
+        override fun onPeerLost(endpointId: String) =
+            emit("AetherisPeerLost", Arguments.createMap().apply { putString("endpointId", endpointId) })
+
+        override fun onLinkUp(endpointId: String, nodeId: String) =
+            emit("AetherisLinkUp", Arguments.createMap().apply {
+                putString("linkId", endpointId)
+                putString("nodeId", nodeId)
+            })
+
+        override fun onLinkDown(endpointId: String) =
+            emit("AetherisLinkDown", Arguments.createMap().apply { putString("linkId", endpointId) })
+
+        override fun onFrame(endpointId: String, data: String) =
+            emit("AetherisFrame", Arguments.createMap().apply {
+                putString("linkId", endpointId)
+                putString("data", data)
+            })
+
+        override fun onError(code: String, message: String) =
+            emit("AetherisRadioError", Arguments.createMap().apply {
+                putString("code", code)
+                putString("message", message)
+            })
+    })
+
+    init {
+        reactContext.addActivityEventListener(this)
+    }
 
     override fun getName(): String = NAME
 
-    // ─── Event emission ───────────────────────────────────────────────────────
-
-    private fun sendEvent(eventName: String, params: WritableMap?) {
+    private fun emit(event: String, params: WritableMap) {
+        if (!reactContext.hasActiveReactInstance()) return
         reactContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-            .emit(eventName, params)
+            .emit(event, params)
     }
 
-    // ─── Discovery ────────────────────────────────────────────────────────────
+    // ─── Radio ─────────────────────────────────────────────────────────────
 
     @ReactMethod
-    fun startDiscovery(nodeId: String, promise: Promise) {
-        if (bleManager.isAdvertising || bleManager.isScanning) {
-            promise.resolve("Already discovering")
-            return
-        }
+    fun start(nodeId: String, promise: Promise) {
         try {
-            if (!bleManager.isBluetoothEnabled()) {
-                promise.reject("BT_DISABLED", "Bluetooth is disabled. Please enable it.")
-                return
-            }
-
-            currentNodeId = nodeId
-            wifiDirectManager.start(nodeId)
-            bleManager.startAdvertising(nodeId)
-            
-            // Start Foreground Service
-            val serviceIntent = Intent(reactContext, AetherisService::class.java)
-            ContextCompat.startForegroundService(reactContext, serviceIntent)
-
-            bleManager.startScanning { peerId, rssi ->
-                reactContext.runOnJSQueueThread {
-                    val now = System.currentTimeMillis()
-                    val isNew = !seenPeers.containsKey(peerId)
-                    seenPeers[peerId] = now
-
-                    if (isNew) {
-                        val params = Arguments.createMap().apply {
-                            putString("id", peerId)
-                            putInt("rssi", rssi)
-                            putDouble("lastSeen", now.toDouble())
-                        }
-                        sendEvent("AetherisPeerDiscovered", params)
-                    } else {
-                        val params = Arguments.createMap().apply {
-                            putString("id", peerId)
-                            putInt("rssi", rssi)
-                            putDouble("lastSeen", now.toDouble())
-                        }
-                        sendEvent("AetherisPeerUpdated", params)
-                    }
-                }
-            }
-
-            startPeerTimeoutChecker()
+            radio.start(nodeId)
+            ContextCompat.startForegroundService(
+                reactContext, Intent(reactContext, AetherisService::class.java)
+            )
             promise.resolve(null)
         } catch (e: Exception) {
-            promise.reject("DISCOVERY_ERROR", e.message ?: "Unknown error")
+            promise.reject("START_FAILED", e.message ?: "Could not start radio", e)
         }
     }
 
     @ReactMethod
-    fun stopDiscovery(promise: Promise) {
+    fun setTickInterval(ms: Double, promise: Promise) {
+        tickHandler.removeCallbacks(tick)
+        tickMs = ms.toLong()
+        if (tickMs > 0) tickHandler.postDelayed(tick, tickMs)
+        promise.resolve(null)
+    }
+
+    @ReactMethod
+    fun stop(promise: Promise) {
         try {
-            bleManager.stopAdvertising()
-            bleManager.stopScanning()
-            wifiDirectManager.stop()
-            stopPeerTimeoutChecker()
-            seenPeers.clear()
-            
-            val serviceIntent = Intent(reactContext, AetherisService::class.java)
-            reactContext.stopService(serviceIntent)
-            
+            tickMs = 0
+            tickHandler.removeCallbacks(tick)
+            radio.stop()
+            reactContext.stopService(Intent(reactContext, AetherisService::class.java))
             promise.resolve(null)
         } catch (e: Exception) {
-            promise.reject("STOP_ERROR", e.message ?: "Unknown error")
+            promise.reject("STOP_FAILED", e.message ?: "Could not stop radio", e)
         }
     }
 
     @ReactMethod
     fun isBluetoothEnabled(promise: Promise) {
-        promise.resolve(bleManager.isBluetoothEnabled())
+        val manager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        promise.resolve(manager?.adapter?.isEnabled == true)
     }
 
-    // ─── Wi-Fi Direct ─────────────────────────────────────────────────────────
-
-    /**
-     * Initiate a Wi-Fi Direct connection to a peer.
-     *
-     * @param deviceAddress The Wi-Fi Direct MAC address of the peer device.
-     *                      On Android this comes from WifiP2pDevice.deviceAddress.
-     *                      The JS side must pass this after resolving it from
-     *                      Wi-Fi Direct peer discovery (separate from BLE).
-     * @param peerId        The Aetheris node ID of the peer (from BLE discovery).
-     */
     @ReactMethod
-    fun connectToPeer(deviceAddress: String, peerId: String, promise: Promise) {
-        try {
-            wifiDirectManager.connectToDevice(deviceAddress, peerId)
-            promise.resolve(null)
-        } catch (e: Exception) {
-            promise.reject("CONNECT_ERROR", e.message ?: "Unknown error")
+    fun setDiscoveryDutyCycle(onMs: Double, offMs: Double, promise: Promise) {
+        radio.setDiscoveryDutyCycle(onMs.toLong(), offMs.toLong())
+        promise.resolve(null)
+    }
+
+    @ReactMethod
+    fun sendFrame(linkId: String, data: String, promise: Promise) {
+        radio.send(linkId, data) { error ->
+            if (error == null) promise.resolve(null)
+            else promise.reject("SEND_FAILED", error.message ?: "Send failed", error)
         }
     }
 
     @ReactMethod
-    fun disconnectFromPeer(peerId: String, promise: Promise) {
+    fun disconnect(linkId: String, promise: Promise) {
+        radio.disconnect(linkId)
+        promise.resolve(null)
+    }
+
+    // ─── Media ─────────────────────────────────────────────────────────────
+
+    @ReactMethod
+    fun pickImage(maxDim: Double, quality: Double, promise: Promise) {
+        val activity = currentActivity
+        if (activity == null) {
+            promise.reject("NO_ACTIVITY", "App is not in the foreground")
+            return
+        }
+        pickPromise?.reject("CANCELLED", "Superseded by a new pick")
+        pickPromise = promise
+        pickMaxDim = maxDim.toInt()
+        pickQuality = quality.toInt()
         try {
-            wifiDirectManager.disconnect(peerId)
-            promise.resolve(null)
+            activity.startActivityForResult(media.pickImageIntent(), MediaHelper.PICK_IMAGE_REQUEST)
         } catch (e: Exception) {
-            promise.reject("DISCONNECT_ERROR", e.message ?: "Unknown error")
+            pickPromise = null
+            promise.reject("PICK_FAILED", e.message ?: "Could not open picker", e)
         }
     }
 
-    /**
-     * Send raw bytes to a connected peer.
-     * Data must be Base64-encoded on the JS side.
-     */
-    @ReactMethod
-    fun sendRawBytes(peerId: String, base64Data: String, promise: Promise) {
-        try {
-            val bytes = Base64.decode(base64Data, Base64.NO_WRAP)
-            val success = wifiDirectManager.sendBytes(peerId, bytes)
-            if (success) {
-                promise.resolve(null)
-            } else {
-                promise.reject("SEND_FAILED", "No active connection to peer $peerId")
+    override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != MediaHelper.PICK_IMAGE_REQUEST) return
+        val promise = pickPromise ?: return
+        pickPromise = null
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null) {
+            promise.resolve(null) // user cancelled
+            return
+        }
+        worker.execute {
+            try {
+                val img = media.compressImage(uri, pickMaxDim, pickQuality)
+                promise.resolve(Arguments.createMap().apply {
+                    putString("data", img.base64)
+                    putString("mime", "image/jpeg")
+                    putInt("width", img.width)
+                    putInt("height", img.height)
+                })
+            } catch (e: Exception) {
+                promise.reject("IMAGE_FAILED", e.message ?: "Could not read image", e)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {}
+
+    @ReactMethod
+    fun startRecording(promise: Promise) {
+        try {
+            media.startRecording()
+            promise.resolve(null)
         } catch (e: Exception) {
-            promise.reject("SEND_ERROR", e.message ?: "Unknown error")
+            promise.reject("RECORD_FAILED", e.message ?: "Could not start recording", e)
         }
     }
 
     @ReactMethod
-    fun getConnectedPeers(promise: Promise) {
-        val peers = wifiDirectManager.getConnectedPeerIds()
-        val arr = Arguments.createArray()
-        peers.forEach { arr.pushString(it) }
-        promise.resolve(arr)
-    }
-
-    @ReactMethod
-    fun isConnectedTo(peerId: String, promise: Promise) {
-        promise.resolve(wifiDirectManager.isConnectedTo(peerId))
-    }
-
-    // ─── Peer timeout checker ─────────────────────────────────────────────────
-
-    private fun startPeerTimeoutChecker() {
-        stopPeerTimeoutChecker()
-        peerTimeoutTimer = Timer().apply {
-            scheduleAtFixedRate(object : TimerTask() {
-                override fun run() {
-                    val now = System.currentTimeMillis()
-                    val lostPeers = seenPeers.entries
-                        .filter { (_, lastSeen) -> now - lastSeen > PEER_TIMEOUT_MS }
-                        .map { it.key }
-
-                    lostPeers.forEach { peerId ->
-                        reactContext.runOnJSQueueThread {
-                            seenPeers.remove(peerId)
-                            val params = Arguments.createMap().apply {
-                                putString("id", peerId)
-                            }
-                            sendEvent("AetherisPeerLost", params)
-                        }
-                    }
-                }
-            }, PEER_CHECK_INTERVAL_MS, PEER_CHECK_INTERVAL_MS)
+    fun stopRecording(promise: Promise) {
+        try {
+            val audio = media.stopRecording()
+            promise.resolve(Arguments.createMap().apply {
+                putString("data", audio.base64)
+                putString("mime", "audio/mp4")
+                putDouble("durationMs", audio.durationMs.toDouble())
+            })
+        } catch (e: Exception) {
+            promise.reject("RECORD_FAILED", e.message ?: "Recording failed", e)
         }
     }
 
-    private fun stopPeerTimeoutChecker() {
-        peerTimeoutTimer?.cancel()
-        peerTimeoutTimer = null
+    @ReactMethod
+    fun cancelRecording(promise: Promise) {
+        media.cancelRecording()
+        promise.resolve(null)
     }
 
-    // ─── Required for RN event emitter ───────────────────────────────────────
+    @ReactMethod
+    fun playAudio(id: String, base64: String, promise: Promise) {
+        try {
+            media.play(base64) {
+                emit("AetherisAudioFinished", Arguments.createMap().apply { putString("id", id) })
+            }
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("PLAY_FAILED", e.message ?: "Could not play audio", e)
+        }
+    }
+
+    @ReactMethod
+    fun stopAudio(promise: Promise) {
+        media.stopPlayback()
+        promise.resolve(null)
+    }
+
+    // ─── Notifications ─────────────────────────────────────────────────────
+
+    @ReactMethod
+    fun showMessageNotification(title: String, body: String, promise: Promise) {
+        try {
+            val manager = NotificationManagerCompat.from(reactContext)
+            if (!manager.areNotificationsEnabled()) {
+                promise.resolve(false)
+                return
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val system = reactContext.getSystemService(NotificationManager::class.java)
+                system.createNotificationChannel(
+                    NotificationChannel(MESSAGE_CHANNEL_ID, "Messages", NotificationManager.IMPORTANCE_HIGH)
+                )
+            }
+            val launch = reactContext.packageManager.getLaunchIntentForPackage(reactContext.packageName)
+            val pending = PendingIntent.getActivity(
+                reactContext, 0, launch,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(reactContext, MESSAGE_CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setContentIntent(pending)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
+            manager.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
+            promise.resolve(true)
+        } catch (e: SecurityException) {
+            promise.resolve(false)
+        }
+    }
+
+    // ─── RN event emitter plumbing ─────────────────────────────────────────
 
     @ReactMethod
     fun addListener(eventName: String) {}
 
-    fun removeListeners(count: Int) {}
-
-    // ─── Cleanup ──────────────────────────────────────────────────────────────
+    @ReactMethod
+    fun removeListeners(count: Double) {}
 
     override fun invalidate() {
         super.invalidate()
-        bleManager.stopAdvertising()
-        bleManager.stopScanning()
-        wifiDirectManager.stop()
-        stopPeerTimeoutChecker()
-        
-        val serviceIntent = Intent(reactContext, AetherisService::class.java)
-        reactContext.stopService(serviceIntent)
+        reactContext.removeActivityEventListener(this)
+        tickMs = 0
+        tickHandler.removeCallbacks(tick)
+        radio.shutdown()
+        media.release()
+        worker.shutdown()
+        reactContext.stopService(Intent(reactContext, AetherisService::class.java))
     }
 }

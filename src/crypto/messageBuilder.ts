@@ -5,16 +5,14 @@
  * This is what the UI calls — it handles all the crypto internally.
  */
 
-import 'react-native-get-random-values';
-import {v4 as uuidv4} from 'uuid';
+import {uuid} from '../utils/uuid';
 import {MeshMessage, MessageContent, MessageType} from '../types/message';
 import {encryptForRecipient, decryptFromSender} from './encryption';
 import {signMessage, verifySignature} from './signing';
 import {loadPrivateKey} from './identity';
-import {Buffer} from 'buffer';
 
 const PROTOCOL_VERSION = 1;
-const DEFAULT_TTL = 7;
+const DEFAULT_TTL = 16;
 const MESSAGE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
 
 /**
@@ -26,6 +24,7 @@ const MESSAGE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
  * @param recipientPublicKeyBase64 Recipient's public key in Base64 for encryption
  * @param content              The message content to encrypt
  * @param type                 'MSG' for normal, 'ACK' for acknowledgement
+ * @param privateKeyBase64     Our signing key; loaded from the keychain if omitted
  */
 export async function buildMessage(
   senderIdBase58: string,
@@ -34,7 +33,9 @@ export async function buildMessage(
   recipientPublicKeyBase64: string,
   content: MessageContent,
   type: MessageType = 'MSG',
-  messageId: string = uuidv4(),
+  messageId: string = uuid(),
+  privateKeyBase64?: string,
+  ttl: number = DEFAULT_TTL,
 ): Promise<MeshMessage> {
   const now = Date.now();
 
@@ -59,7 +60,7 @@ export async function buildMessage(
     },
     payload: encryptedPayload,
     routing: {
-      ttl: DEFAULT_TTL,
+      ttl,
       hops: [],
       originTimestamp: now,
       expiresAt: now + MESSAGE_TTL_MS,
@@ -67,7 +68,7 @@ export async function buildMessage(
   };
 
   // 3. Sign it
-  const privateKey = await loadPrivateKey();
+  const privateKey = privateKeyBase64 ?? (await loadPrivateKey());
   const signature = await signMessage(unsigned, privateKey);
 
   return {...unsigned, signature};
@@ -140,7 +141,7 @@ export function serializeMessage(message: MeshMessage): string {
 }
 
 /**
- * Deserialize bytes received over Wi-Fi Direct back into a MeshMessage.
+ * Deserialize a message received from the mesh back into a MeshMessage.
  * Returns null if the data is malformed.
  */
 export function deserializeMessage(data: string): MeshMessage | null {

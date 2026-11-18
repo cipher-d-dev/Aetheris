@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -24,13 +25,24 @@ class AetherisService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Aetheris Mesh Network")
-            .setContentText("Mesh network is running in the background.")
+            .setContentTitle("Aetheris is relaying")
+            .setContentText("Passing messages between nearby phones.")
             .setSmallIcon(R.mipmap.ic_launcher) // Use app icon
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            // Android 14+ refuses if Bluetooth/Wi-Fi permissions aren't granted yet.
+            // The mesh still runs while the app is open; just no background relay.
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // START_STICKY tells OS to recreate service if it's killed due to low memory
         return START_STICKY

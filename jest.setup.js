@@ -81,11 +81,21 @@ jest.mock('react-native-permissions', () => ({
       BLUETOOTH_ADVERTISE: 'android.permission.BLUETOOTH_ADVERTISE',
       BLUETOOTH_CONNECT: 'android.permission.BLUETOOTH_CONNECT',
       BLUETOOTH_SCAN: 'android.permission.BLUETOOTH_SCAN',
+      NEARBY_WIFI_DEVICES: 'android.permission.NEARBY_WIFI_DEVICES',
+      RECORD_AUDIO: 'android.permission.RECORD_AUDIO',
     },
   },
-  RESULTS: {GRANTED: 'granted'},
+  RESULTS: {GRANTED: 'granted', DENIED: 'denied', BLOCKED: 'blocked', UNAVAILABLE: 'unavailable'},
   check: jest.fn(() => Promise.resolve('granted')),
   request: jest.fn(() => Promise.resolve('granted')),
+  checkMultiple: jest.fn(perms =>
+    Promise.resolve(Object.fromEntries(perms.map(p => [p, 'granted']))),
+  ),
+  requestMultiple: jest.fn(perms =>
+    Promise.resolve(Object.fromEntries(perms.map(p => [p, 'granted']))),
+  ),
+  requestNotifications: jest.fn(() => Promise.resolve({status: 'granted'})),
+  openSettings: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('react-native-sodium', () => ({
@@ -111,26 +121,34 @@ jest.mock('react-native-sodium', () => ({
   crypto_box_open_easy: jest.fn(() => Promise.resolve(Buffer.from('{}').toString('base64'))),
 }));
 
-jest.mock('uuid', () => ({
-  v4: jest.fn(() => '00000000-0000-4000-8000-000000000000'),
-}));
-
-jest.mock('./src/native/AetherisBridge', () => ({
-  AetherisBridge: {
-    startDiscovery: jest.fn(() => Promise.resolve()),
-    stopDiscovery: jest.fn(() => Promise.resolve()),
-    isBluetoothEnabled: jest.fn(() => Promise.resolve(true)),
-    connectToPeer: jest.fn(() => Promise.resolve()),
-    disconnectFromPeer: jest.fn(() => Promise.resolve()),
-    sendRawBytes: jest.fn(() => Promise.resolve()),
-    getConnectedPeers: jest.fn(() => Promise.resolve([])),
-    isConnectedTo: jest.fn(() => Promise.resolve(false)),
-    onPeerDiscovered: jest.fn(() => ({remove: jest.fn()})),
-    onPeerUpdated: jest.fn(() => ({remove: jest.fn()})),
-    onPeerLost: jest.fn(() => ({remove: jest.fn()})),
-    onConnectionStateChanged: jest.fn(() => ({remove: jest.fn()})),
-    onMessageReceived: jest.fn(() => ({remove: jest.fn()})),
-  },
-}));
+jest.mock('./src/native/AetherisBridge', () => {
+  const sub = () => ({remove: jest.fn()});
+  return {
+    AetherisBridge: {
+      start: jest.fn(() => Promise.resolve()),
+      stop: jest.fn(() => Promise.resolve()),
+      isBluetoothEnabled: jest.fn(() => Promise.resolve(true)),
+      setDiscoveryDutyCycle: jest.fn(() => Promise.resolve()),
+      setTickInterval: jest.fn(() => Promise.resolve()),
+      sendFrame: jest.fn(() => Promise.resolve()),
+      disconnect: jest.fn(() => Promise.resolve()),
+      pickImage: jest.fn(() => Promise.resolve(null)),
+      startRecording: jest.fn(() => Promise.resolve()),
+      stopRecording: jest.fn(() => Promise.resolve({data: '', mime: 'audio/mp4', durationMs: 0})),
+      cancelRecording: jest.fn(() => Promise.resolve()),
+      playAudio: jest.fn(() => Promise.resolve()),
+      stopAudio: jest.fn(() => Promise.resolve()),
+      showMessageNotification: jest.fn(() => Promise.resolve(true)),
+      onPeerFound: jest.fn(sub),
+      onPeerLost: jest.fn(sub),
+      onLinkUp: jest.fn(sub),
+      onLinkDown: jest.fn(sub),
+      onFrame: jest.fn(sub),
+      onRadioError: jest.fn(sub),
+      onTick: jest.fn(sub),
+      onAudioFinished: jest.fn(sub),
+    },
+  };
+});
 
 jest.mock('react-native-vector-icons/Feather', () => 'Icon');

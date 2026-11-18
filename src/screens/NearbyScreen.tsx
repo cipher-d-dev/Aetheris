@@ -1,596 +1,206 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, {useEffect, useRef} from 'react';
 import {
-    View,
-    Text,
-    StyleSheet,
-    FlatList,
-    TouchableOpacity,
-    Animated,
-    Platform,
-    Easing,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Animated,
+  Easing,
 } from 'react-native';
-import { check, request, PERMISSIONS, RESULTS } from 'react-native-permissions';
 import Icon from 'react-native-vector-icons/Feather';
-import { useThemeStore, Font } from '../theme';
-import { useIdentityStore } from '../store/identityStore';
-import {
-    AetherisBridge,
-    NativePeer,
-    ConnectionState,
-} from '../native/AetherisBridge';
-import { dbUpsertPeer } from '../db/database';
+import {useNavigation} from '@react-navigation/native';
+import {openSettings} from 'react-native-permissions';
+import {useThemeStore, Font} from '../theme';
+import {useIdentityStore} from '../store/identityStore';
+import {MeshRoute, useMeshService} from '../store/meshService';
+import {displayName} from '../store/messagesStore';
+import {formatShortId} from '../crypto/encoding';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface Peer {
-    id: string;
-    rssi: number;
-    lastSeen: number;
-    connectionState: ConnectionState | 'idle';
-}
-
-type ScanState = 'idle' | 'requesting' | 'scanning' | 'denied' | 'bt_off';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function rssiToSignal(rssi: number): { label: string; bars: number; color: string } {
-    if (rssi >= -60) return { label: 'Strong', bars: 4, color: '#22C55E' };
-    if (rssi >= -70) return { label: 'Good', bars: 3, color: '#84CC16' };
-    if (rssi >= -80) return { label: 'Fair', bars: 2, color: '#F59E0B' };
-    return { label: 'Weak', bars: 1, color: '#EF4444' };
-}
-
-function timeAgo(ms: number): string {
-    const seconds = Math.floor((Date.now() - ms) / 1000);
-    if (seconds < 5) return 'just now';
-    if (seconds < 60) return `${seconds}s ago`;
-    return `${Math.floor(seconds / 60)}m ago`;
-}
-
-function connectionStateLabel(state: ConnectionState | 'idle'): string {
-    switch (state) {
-        case 'idle': return '';
-        case 'connecting': return 'Connecting...';
-        case 'connected': return 'Connected';
-        case 'disconnected': return 'Disconnected';
-        case 'failed': return 'Failed';
-        case 'authenticating': return 'Authenticating...';
-        case 'authenticated': return 'Authenticated';
-    }
-}
-
-function isLikelyFullPeerId(id: string): boolean {
-    return id.replace(/[-\s]+/g, '').length >= 32;
-}
-
-function connectionStateColor(state: ConnectionState | 'idle', accent: string): string {
-    switch (state) {
-        case 'connected': return '#22C55E';
-        case 'authenticated': return '#22C55E';
-        case 'connecting': return '#F59E0B';
-        case 'authenticating': return '#F59E0B';
-        case 'failed': return '#EF4444';
-        case 'disconnected': return '#6B7280';
-        default: return accent;
-    }
-}
-
-// ─── Signal Bars ──────────────────────────────────────────────────────────────
-
-function SignalBars({ bars, color }: { bars: number; color: string }) {
-    return (
-        <View style={signalStyles.row}>
-            {[1, 2, 3, 4].map(i => (
-                <View
-                    key={i}
-                    style={[
-                        signalStyles.bar,
-                        {
-                            height: 4 + i * 3,
-                            backgroundColor: i <= bars ? color : '#3A3F4D',
-                        },
-                    ]}
-                />
-            ))}
-        </View>
+function PulsingRing({color}: {color: string}) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(0.6)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.parallel([
+        Animated.timing(scale, {toValue: 1.8, duration: 1400, easing: Easing.out(Easing.ease), useNativeDriver: true}),
+        Animated.timing(opacity, {toValue: 0, duration: 1400, useNativeDriver: true}),
+      ]),
     );
+    loop.start();
+    return () => loop.stop();
+  }, [scale, opacity]);
+  return (
+    <View style={styles.pulseWrap}>
+      <Animated.View style={[styles.pulseRing, {borderColor: color, transform: [{scale}], opacity}]} />
+      <View style={[styles.pulseDot, {backgroundColor: color}]} />
+    </View>
+  );
 }
 
-const signalStyles = StyleSheet.create({
-    row: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
-    bar: { width: 4, borderRadius: 2 },
-});
-
-// ─── Pulsing Ring ─────────────────────────────────────────────────────────────
-
-function PulsingRing({ color }: { color: string }) {
-    const scale = useRef(new Animated.Value(1)).current;
-    const opacity = useRef(new Animated.Value(0.6)).current;
-
-    useEffect(() => {
-        const loop = Animated.loop(
-            Animated.parallel([
-                Animated.sequence([
-                    Animated.timing(scale, {
-                        toValue: 1.8,
-                        duration: 1400,
-                        easing: Easing.out(Easing.ease),
-                        useNativeDriver: true,
-                    }),
-                    Animated.timing(scale, { toValue: 1, duration: 0, useNativeDriver: true }),
-                ]),
-                Animated.sequence([
-                    Animated.timing(opacity, { toValue: 0, duration: 1400, useNativeDriver: true }),
-                    Animated.timing(opacity, { toValue: 0.6, duration: 0, useNativeDriver: true }),
-                ]),
-            ]),
-        );
-        loop.start();
-        return () => loop.stop();
-    }, []);
-
-    return (
-        <View style={pulseStyles.wrap}>
-            <Animated.View
-                style={[
-                    pulseStyles.ring,
-                    { borderColor: color, transform: [{ scale }], opacity },
-                ]}
-            />
-            <View style={[pulseStyles.dot, { backgroundColor: color }]} />
-        </View>
-    );
+function Stat({value, label}: {value: number; label: string}) {
+  const {theme: t} = useThemeStore();
+  return (
+    <View style={styles.stat}>
+      <Text style={[styles.statValue, {color: t.text}]}>{value}</Text>
+      <Text style={[styles.statLabel, {color: t.textMuted}]}>{label}</Text>
+    </View>
+  );
 }
 
-const pulseStyles = StyleSheet.create({
-    wrap: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-    ring: {
-        position: 'absolute',
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        borderWidth: 1.5,
-    },
-    dot: { width: 8, height: 8, borderRadius: 4 },
-});
-
-// ─── Peer Card ────────────────────────────────────────────────────────────────
-
-function PeerCard({
-    peer,
-    onConnect,
-    onDisconnect,
-}: {
-    peer: Peer;
-    onConnect: (id: string) => void;
-    onDisconnect: (id: string) => void;
-}) {
-    const { theme: t } = useThemeStore();
-    const signal = rssiToSignal(peer.rssi);
-    const connColor = connectionStateColor(peer.connectionState, t.accent);
-    const isConnected = peer.connectionState === 'connected' || peer.connectionState === 'authenticated';
-    const isConnecting = peer.connectionState === 'connecting';
-
-    return (
-        <View style={[peerStyles.card, { backgroundColor: t.surface, borderColor: t.border }]}>
-            <View style={[peerStyles.avatar, { backgroundColor: t.accentSoft, borderColor: t.accentBorder }]}>
-                <Icon name="user" size={18} color={t.accent} />
-            </View>
-
-            <View style={peerStyles.info}>
-                <Text style={[peerStyles.peerId, { color: t.text }]}>{peer.id}</Text>
-                <Text style={[peerStyles.lastSeen, { color: t.textMuted }]}>
-                    {timeAgo(peer.lastSeen)}
-                </Text>
-                {peer.connectionState !== 'idle' && (
-                    <Text style={[peerStyles.connState, { color: connColor }]}>
-                        {connectionStateLabel(peer.connectionState)}
-                    </Text>
-                )}
-            </View>
-
-            <View style={peerStyles.right}>
-                <SignalBars bars={signal.bars} color={signal.color} />
-                <Text style={[peerStyles.rssiText, { color: t.textMuted }]}>
-                    {peer.rssi} dBm
-                </Text>
-
-                {isConnected ? (
-                    <TouchableOpacity
-                        style={[peerStyles.actionButton, { borderColor: '#EF4444' }]}
-                        onPress={() => onDisconnect(peer.id)}
-                        activeOpacity={0.7}>
-                        <Text style={[peerStyles.actionText, { color: '#EF4444' }]}>
-                            Disconnect
-                        </Text>
-                    </TouchableOpacity>
-                ) : (
-                    <TouchableOpacity
-                        style={[
-                            peerStyles.actionButton,
-                            { borderColor: isConnecting ? t.textMuted : t.accentBorder },
-                        ]}
-                        onPress={() => !isConnecting && onConnect(peer.id)}
-                        activeOpacity={0.7}
-                        disabled={isConnecting}>
-                        <Text
-                            style={[
-                                peerStyles.actionText,
-                                { color: isConnecting ? t.textMuted : t.accent },
-                            ]}>
-                            {isConnecting ? '...' : 'Connect'}
-                        </Text>
-                    </TouchableOpacity>
-                )}
-            </View>
-        </View>
-    );
+function PeerRow({route, onPress}: {route: MeshRoute; onPress: () => void}) {
+  const {theme: t} = useThemeStore();
+  const direct = route.hops === 1;
+  return (
+    <TouchableOpacity
+      style={[styles.peerRow, {backgroundColor: t.surface, borderColor: t.border}]}
+      onPress={onPress}
+      activeOpacity={0.7}>
+      <View style={[styles.avatar, {backgroundColor: t.accentSoft, borderColor: t.accentBorder}]}>
+        <Icon name={direct ? 'radio' : 'share-2'} size={16} color={t.accent} />
+      </View>
+      <View style={{flex: 1}}>
+        <Text style={[styles.peerName, {color: t.text}]} numberOfLines={1}>
+          {displayName(route.id, route.alias)}
+        </Text>
+        <Text style={[styles.peerSub, {color: t.textMuted}]} numberOfLines={1}>
+          {direct
+            ? `${formatShortId(route.id)} · in range`
+            : `${formatShortId(route.id)} · ${route.hops} hops via ${displayName(route.nextHop)}`}
+        </Text>
+      </View>
+      <View style={[styles.hopBadge, {backgroundColor: direct ? t.successBg : t.surfaceAlt}]}>
+        <Text style={[styles.hopText, {color: direct ? t.successText : t.textSub}]}>
+          {direct ? 'Direct' : `${route.hops} hops`}
+        </Text>
+      </View>
+      <Icon name="message-circle" size={16} color={t.textMuted} style={{marginLeft: 8}} />
+    </TouchableOpacity>
+  );
 }
-
-const peerStyles = StyleSheet.create({
-    card: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        borderWidth: 1,
-        borderRadius: 16,
-        padding: 14,
-        marginBottom: 10,
-    },
-    avatar: {
-        width: 40,
-        height: 40,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-    },
-    info: { flex: 1 },
-    peerId: { fontSize: 14, fontFamily: Font.semiBold, letterSpacing: 1 },
-    lastSeen: { fontSize: 11, fontFamily: Font.regular, marginTop: 2 },
-    connState: { fontSize: 11, fontFamily: Font.medium, marginTop: 2 },
-    right: { alignItems: 'center', gap: 4 },
-    rssiText: { fontSize: 9, fontFamily: Font.regular },
-    actionButton: {
-        borderWidth: 1,
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        marginTop: 4,
-    },
-    actionText: { fontSize: 11, fontFamily: Font.semiBold },
-});
-
-// ─── Permission Helper ────────────────────────────────────────────────────────
-
-async function requestBlePermissions(): Promise<boolean> {
-    if (Platform.OS !== 'android') return true;
-    const version = Platform.Version as number;
-
-    if (version >= 31) {
-        const results = await Promise.all([
-            request(PERMISSIONS.ANDROID.BLUETOOTH_SCAN),
-            request(PERMISSIONS.ANDROID.BLUETOOTH_ADVERTISE),
-            request(PERMISSIONS.ANDROID.BLUETOOTH_CONNECT),
-        ]);
-        return results.every(r => r === RESULTS.GRANTED);
-    } else {
-        const result = await request(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION);
-        return result === RESULTS.GRANTED;
-    }
-}
-
-// ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function NearbyScreen() {
-    const { theme: t } = useThemeStore();
-    const { identity } = useIdentityStore();
+  const {theme: t} = useThemeStore();
+  const identity = useIdentityStore(s => s.identity);
+  const navigation = useNavigation<any>();
+  const {status, error, permission, bluetoothOn, routes, nearbyCount, carrying, bootstrap} =
+    useMeshService();
 
-    const [peers, setPeers] = useState<Peer[]>([]);
-    const [scanState, setScanState] = useState<ScanState>('idle');
-    const peersRef = useRef<Peer[]>([]);
+  const direct = routes.filter(r => r.hops === 1);
+  const viaMesh = routes.filter(r => r.hops > 1);
 
-    const updatePeers = useCallback((updater: (prev: Peer[]) => Peer[]) => {
-        const next = updater(peersRef.current);
-        peersRef.current = next;
-        setPeers([...next]);
-    }, []);
+  const openChat = (id: string) =>
+    navigation.navigate('Messages', {screen: 'Chat', params: {conversationId: id}, initial: false});
 
-    useEffect(() => {
-        const subDiscovered = AetherisBridge.onPeerDiscovered((peer: NativePeer) => {
-            if (isLikelyFullPeerId(peer.id)) {
-                dbUpsertPeer(peer.id, peer.rssi);
-            }
-            updatePeers(prev => {
-                if (prev.find(p => p.id === peer.id)) return prev;
-                return [
-                    ...prev,
-                    { id: peer.id, rssi: peer.rssi, lastSeen: peer.lastSeen, connectionState: 'idle' },
-                ];
-            });
-        });
+  const retry = () => identity && bootstrap(identity.publicKeyBase58);
 
-        const subUpdated = AetherisBridge.onPeerUpdated((peer: NativePeer) => {
-            if (isLikelyFullPeerId(peer.id)) {
-                dbUpsertPeer(peer.id, peer.rssi);
-            }
-            updatePeers(prev =>
-                prev.map(p =>
-                    p.id === peer.id ? { ...p, rssi: peer.rssi, lastSeen: peer.lastSeen } : p,
-                ),
-            );
-        });
-
-        const subLost = AetherisBridge.onPeerLost(({ id }: { id: string }) => {
-            updatePeers(prev => prev.filter(p => p.id !== id));
-        });
-
-        const subConnection = AetherisBridge.onConnectionStateChanged(event => {
-            if (isLikelyFullPeerId(event.peerId)) {
-                dbUpsertPeer(event.peerId, 0);
-            }
-            updatePeers(prev =>
-                prev.find(p => p.id === event.peerId)
-                    ? prev.map(p =>
-                        p.id === event.peerId ? { ...p, connectionState: event.state } : p,
-                    )
-                    : [
-                        ...prev,
-                        {
-                            id: event.peerId,
-                            rssi: 0,
-                            lastSeen: Date.now(),
-                            connectionState: event.state,
-                        },
-                    ],
-            );
-        });
-
-        return () => {
-            subDiscovered.remove();
-            subUpdated.remove();
-            subLost.remove();
-            subConnection.remove();
-        };
-    }, []);
-
-    const startScan = async () => {
-        if (!identity) return;
-        setScanState('requesting');
-
-        const granted = await requestBlePermissions();
-        if (!granted) {
-            setScanState('denied');
-            return;
-        }
-
-        const btEnabled = await AetherisBridge.isBluetoothEnabled();
-        if (!btEnabled) {
-            setScanState('bt_off');
-            return;
-        }
-
-        try {
-            await AetherisBridge.startDiscovery(identity.publicKeyBase58);
-            setScanState('scanning');
-        } catch (e) {
-            setScanState('idle');
-        }
+  let banner: {icon: string; text: string; action?: {label: string; onPress: () => void}} | null =
+    null;
+  if (permission === 'blocked') {
+    banner = {
+      icon: 'lock',
+      text: 'Aetheris needs Nearby devices / Location permission to find other phones.',
+      action: {label: 'Open settings', onPress: () => openSettings()},
     };
-
-    const stopScan = async () => {
-        await AetherisBridge.stopDiscovery();
-        setScanState('idle');
-        peersRef.current = [];
-        setPeers([]);
+  } else if (permission === 'denied') {
+    banner = {
+      icon: 'lock',
+      text: 'Permission is needed to discover nearby phones.',
+      action: {label: 'Allow', onPress: retry},
     };
-
-    /**
-     * NOTE: connectToPeer requires the Wi-Fi Direct MAC address, which is
-     * separate from the Aetheris node ID. In a full implementation this
-     * comes from a Wi-Fi Direct peer discovery scan. For now this is
-     * wired up and ready — the MAC address resolution is a Day 5 enhancement
-     * where we embed the WFD MAC in the BLE advertisement payload.
-     *
-     * For testing Day 3: pass the device's Wi-Fi Direct MAC manually.
-     */
-    const handleConnect = async (peerId: string) => {
-        // Placeholder — in production the deviceAddress comes from BLE payload
-        // For now connect triggers the Wi-Fi Direct flow from native side
-        await AetherisBridge.connectToPeer('', peerId);
+  } else if (!bluetoothOn) {
+    banner = {
+      icon: 'bluetooth',
+      text: 'Bluetooth is off. Turn it on so nearby phones can find you.',
+      action: {label: 'Retry', onPress: retry},
     };
+  } else if (status === 'error') {
+    banner = {icon: 'alert-triangle', text: error ?? 'The radio failed to start.', action: {label: 'Retry', onPress: retry}};
+  }
 
-    const handleDisconnect = async (peerId: string) => {
-        await AetherisBridge.disconnectFromPeer(peerId);
-    };
+  const running = status === 'running';
 
-    // ─── Render ───────────────────────────────────────────────────────────────
-
-    const renderHeader = () => (
-        <View style={styles.headerWrap}>
-            <View style={styles.headerTop}>
-                <View>
-                    <Text style={[styles.headerTitle, { color: t.text }]}>Nearby</Text>
-                    <Text style={[styles.headerSub, { color: t.textMuted }]}>
-                        {scanState === 'scanning'
-                            ? `${peers.length} peer${peers.length !== 1 ? 's' : ''} found`
-                            : 'Discover peers around you'}
-                    </Text>
-                </View>
-                {scanState === 'scanning' && <PulsingRing color={t.accent} />}
-            </View>
-
-            {scanState !== 'scanning' ? (
-                <TouchableOpacity
-                    style={[styles.scanButton, { backgroundColor: t.accent }]}
-                    onPress={startScan}
-                    activeOpacity={0.8}
-                    disabled={scanState === 'requesting'}>
-                    <Icon name="radio" size={16} color="#FFFFFF" />
-                    <Text style={styles.scanButtonText}>
-                        {scanState === 'requesting' ? 'Starting...' : 'Start Scanning'}
-                    </Text>
-                </TouchableOpacity>
-            ) : (
-                <TouchableOpacity
-                    style={[styles.stopButton, { borderColor: t.border, backgroundColor: t.surfaceAlt }]}
-                    onPress={stopScan}
-                    activeOpacity={0.8}>
-                    <Icon name="square" size={14} color={t.textSub} />
-                    <Text style={[styles.stopButtonText, { color: t.textSub }]}>Stop</Text>
-                </TouchableOpacity>
-            )}
-
-            {scanState === 'denied' && (
-                <View style={[styles.banner, { backgroundColor: t.errorBg, borderColor: t.errorBorder }]}>
-                    <Icon name="alert-triangle" size={14} color={t.errorText} />
-                    <Text style={[styles.bannerText, { color: t.errorText }]}>
-                        Bluetooth permission denied. Enable it in device Settings.
-                    </Text>
-                </View>
-            )}
-
-            {scanState === 'bt_off' && (
-                <View style={[styles.banner, { backgroundColor: t.errorBg, borderColor: t.errorBorder }]}>
-                    <Icon name="bluetooth-off" size={14} color={t.errorText} />
-                    <Text style={[styles.bannerText, { color: t.errorText }]}>
-                        Bluetooth is off. Please enable it.
-                    </Text>
-                </View>
-            )}
-
-            {peers.length > 0 && (
-                <Text style={[styles.sectionLabel, { color: t.textMuted }]}>PEERS</Text>
-            )}
+  return (
+    <ScrollView style={{flex: 1, backgroundColor: t.bg}} contentContainerStyle={styles.content}>
+      <View style={styles.headerTop}>
+        <View>
+          <Text style={[styles.title, {color: t.text}]}>Mesh</Text>
+          <Text style={[styles.subtitle, {color: t.textMuted}]}>
+            {running ? 'Listening for nearby phones' : status === 'starting' ? 'Starting radio…' : 'Radio is off'}
+          </Text>
         </View>
-    );
+        {running && <PulsingRing color={t.accent} />}
+      </View>
 
-    const renderEmpty = () => {
-        if (scanState !== 'scanning') return null;
-        return (
-            <View style={styles.emptyState}>
-                <View style={[styles.emptyIconWrap, { backgroundColor: t.surfaceAlt, borderColor: t.border }]}>
-                    <Icon name="radio" size={28} color={t.textMuted} />
-                </View>
-                <Text style={[styles.emptyTitle, { color: t.text }]}>Scanning...</Text>
-                <Text style={[styles.emptySubtitle, { color: t.textSub }]}>
-                    Move closer to other Aetheris devices.{'\n'}
-                    Peers appear here when detected.
-                </Text>
-            </View>
-        );
-    };
-
-    return (
-        <View style={[styles.container, { backgroundColor: t.bg }]}>
-            <FlatList
-                data={peers}
-                keyExtractor={item => item.id}
-                renderItem={({ item }) => (
-                    <PeerCard
-                        peer={item}
-                        onConnect={handleConnect}
-                        onDisconnect={handleDisconnect}
-                    />
-                )}
-                ListHeaderComponent={renderHeader}
-                ListEmptyComponent={renderEmpty}
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
-            />
+      {banner && (
+        <View style={[styles.banner, {backgroundColor: t.errorBg, borderColor: t.errorBorder}]}>
+          <Icon name={banner.icon} size={16} color={t.errorText} />
+          <Text style={[styles.bannerText, {color: t.errorText}]}>{banner.text}</Text>
+          {banner.action && (
+            <TouchableOpacity onPress={banner.action.onPress}>
+              <Text style={[styles.bannerAction, {color: t.errorText}]}>{banner.action.label}</Text>
+            </TouchableOpacity>
+          )}
         </View>
-    );
+      )}
+
+      <View style={[styles.stats, {backgroundColor: t.surface, borderColor: t.border}]}>
+        <Stat value={nearbyCount} label="nearby" />
+        <Stat value={direct.length} label="linked" />
+        <Stat value={routes.length} label="reachable" />
+        <Stat value={carrying} label="carrying" />
+      </View>
+
+      <Text style={[styles.section, {color: t.textMuted}]}>IN RANGE</Text>
+      {direct.length === 0 ? (
+        <Text style={[styles.empty, {color: t.textMuted}]}>
+          No one in range yet. Phones running Aetheris within ~30–100 m connect automatically.
+        </Text>
+      ) : (
+        direct.map(r => <PeerRow key={r.id} route={r} onPress={() => openChat(r.id)} />)
+      )}
+
+      <Text style={[styles.section, {color: t.textMuted}]}>THROUGH THE MESH</Text>
+      {viaMesh.length === 0 ? (
+        <Text style={[styles.empty, {color: t.textMuted}]}>
+          People your neighbours can reach show up here, with the shortest path to them.
+        </Text>
+      ) : (
+        viaMesh.map(r => <PeerRow key={r.id} route={r} onPress={() => openChat(r.id)} />)
+      )}
+
+      {carrying > 0 && (
+        <Text style={[styles.footnote, {color: t.textMuted}]}>
+          This phone is holding {carrying} encrypted message{carrying === 1 ? '' : 's'} and will pass
+          {carrying === 1 ? ' it' : ' them'} on when a route appears.
+        </Text>
+      )}
+    </ScrollView>
+  );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-    container: { flex: 1 },
-    listContent: {
-        paddingHorizontal: 24,
-        paddingTop: 56,
-        paddingBottom: 32,
-        flexGrow: 1,
-    },
-
-    headerWrap: { marginBottom: 8 },
-    headerTop: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        marginBottom: 20,
-    },
-    headerTitle: {
-        fontSize: 28,
-        fontFamily: Font.bold,
-        letterSpacing: -0.5,
-        marginBottom: 4,
-    },
-    headerSub: { fontSize: 14, fontFamily: Font.regular },
-
-    scanButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        borderRadius: 14,
-        paddingVertical: 14,
-        marginBottom: 16,
-    },
-    scanButtonText: { color: '#FFFFFF', fontSize: 15, fontFamily: Font.semiBold },
-
-    stopButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        borderRadius: 14,
-        paddingVertical: 14,
-        borderWidth: 1,
-        marginBottom: 16,
-    },
-    stopButtonText: { fontSize: 15, fontFamily: Font.semiBold },
-
-    banner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        borderWidth: 1,
-        borderRadius: 12,
-        padding: 12,
-        marginBottom: 16,
-    },
-    bannerText: { fontSize: 13, fontFamily: Font.regular, flex: 1 },
-
-    sectionLabel: {
-        fontSize: 10,
-        fontFamily: Font.bold,
-        letterSpacing: 2,
-        marginBottom: 8,
-        marginTop: 4,
-    },
-
-    emptyState: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingTop: 60,
-        gap: 12,
-    },
-    emptyIconWrap: {
-        width: 72,
-        height: 72,
-        borderRadius: 24,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        marginBottom: 8,
-    },
-    emptyTitle: { fontSize: 17, fontFamily: Font.semiBold },
-    emptySubtitle: {
-        fontSize: 14,
-        fontFamily: Font.regular,
-        textAlign: 'center',
-        lineHeight: 21,
-    },
+  content: {paddingHorizontal: 20, paddingTop: 56, paddingBottom: 90},
+  headerTop: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20},
+  title: {fontSize: 28, fontFamily: Font.extraBold, letterSpacing: -0.5},
+  subtitle: {fontSize: 13, fontFamily: Font.regular, marginTop: 2},
+  pulseWrap: {width: 24, height: 24, alignItems: 'center', justifyContent: 'center'},
+  pulseRing: {position: 'absolute', width: 24, height: 24, borderRadius: 12, borderWidth: 1.5},
+  pulseDot: {width: 8, height: 8, borderRadius: 4},
+  banner: {flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 16},
+  bannerText: {flex: 1, fontSize: 13, fontFamily: Font.regular, lineHeight: 18},
+  bannerAction: {fontSize: 13, fontFamily: Font.bold},
+  stats: {flexDirection: 'row', borderWidth: 1, borderRadius: 16, paddingVertical: 14, marginBottom: 8},
+  stat: {flex: 1, alignItems: 'center'},
+  statValue: {fontSize: 20, fontFamily: Font.bold},
+  statLabel: {fontSize: 11, fontFamily: Font.medium, marginTop: 2},
+  section: {fontSize: 10, fontFamily: Font.bold, letterSpacing: 2, marginTop: 20, marginBottom: 8},
+  empty: {fontSize: 13, fontFamily: Font.regular, lineHeight: 19},
+  peerRow: {flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 8},
+  avatar: {width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1},
+  peerName: {fontSize: 14, fontFamily: Font.semiBold},
+  peerSub: {fontSize: 11, fontFamily: Font.regular, marginTop: 2},
+  hopBadge: {borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3},
+  hopText: {fontSize: 11, fontFamily: Font.semiBold},
+  footnote: {fontSize: 12, fontFamily: Font.regular, marginTop: 20, lineHeight: 18},
 });
