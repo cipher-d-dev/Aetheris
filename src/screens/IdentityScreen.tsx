@@ -6,12 +6,19 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Clipboard,
+  Share,
   Modal,
   Pressable,
+  ScrollView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Feather';
 import {useIdentityStore} from '../store/identityStore';
 import {useThemeStore, Font} from '../theme';
+import QRCode from '../components/QRCode';
+import {buildContactLink} from '../contacts/contactLink';
+import {addResultMessage, scanContact} from '../contacts/addContact';
+import {useMeshService} from '../store/meshService';
+import {openChat} from '../navigation/navigationRef';
 
 // ─── Custom Alert ─────────────────────────────────────────────────────────────
 
@@ -104,6 +111,26 @@ export default function IdentityScreen() {
     setAlertVisible(true);
   };
 
+  const alias = useMeshService(s => s.alias);
+  const link = identity ? buildContactLink(identity.publicKeyBase58, alias) : '';
+
+  const shareLink = () => {
+    if (!link) return;
+    Share.share({message: `Message me on Aetheris (works with no internet): ${link}`}).catch(
+      () => undefined,
+    );
+  };
+
+  const scan = async () => {
+    if (!identity) return;
+    const result = await scanContact(identity.publicKeyBase58);
+    if (result.ok) {
+      openChat(result.contact.id);
+    } else if (result.reason !== 'cancelled') {
+      showAlert('Could not add contact', addResultMessage(result), 'error');
+    }
+  };
+
   const copyId = () => {
     if (!identity) return;
     Clipboard.setString(identity.publicKeyBase58);
@@ -157,7 +184,9 @@ export default function IdentityScreen() {
   }
 
   return (
-    <View style={[styles.container, {backgroundColor: t.bg}]}>
+    <ScrollView
+      style={{flex: 1, backgroundColor: t.bg}}
+      contentContainerStyle={styles.container}>
       <CustomAlert
         visible={alertVisible}
         title={alertConfig.title}
@@ -192,23 +221,50 @@ export default function IdentityScreen() {
           </Text>
         </View>
 
+        {link !== '' && (
+          <View style={styles.qrWrap}>
+            <QRCode value={link} size={196} />
+          </View>
+        )}
+
         <Text style={[styles.idHint, {color: t.textSub}]}>
-          Share this ID so others can find and message you on the mesh
+          Let a friend scan this to add you. Scanning in person also proves
+          it's really you.
         </Text>
 
-        <TouchableOpacity
-          style={[
-            styles.copyButton,
-            {backgroundColor: t.accentSoft, borderColor: t.accentBorder},
-          ]}
-          onPress={copyId}
-          activeOpacity={0.7}>
-          <Icon name="copy" size={14} color={t.accent} />
-          <Text style={[styles.copyButtonText, {color: t.accent}]}>
-            Copy Full Public Key
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={[
+              styles.copyButton,
+              styles.flexButton,
+              {backgroundColor: t.accentSoft, borderColor: t.accentBorder},
+            ]}
+            onPress={shareLink}
+            activeOpacity={0.7}>
+            <Icon name="share-2" size={14} color={t.accent} />
+            <Text style={[styles.copyButtonText, {color: t.accent}]}>Share link</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.copyButton,
+              styles.flexButton,
+              {backgroundColor: t.accentSoft, borderColor: t.accentBorder},
+            ]}
+            onPress={copyId}
+            activeOpacity={0.7}>
+            <Icon name="copy" size={14} color={t.accent} />
+            <Text style={[styles.copyButtonText, {color: t.accent}]}>Copy ID</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      <TouchableOpacity
+        style={[styles.scanButton, {backgroundColor: t.accent}]}
+        onPress={scan}
+        activeOpacity={0.8}>
+        <Icon name="maximize" size={16} color="#FFFFFF" />
+        <Text style={styles.scanButtonText}>Scan someone's code</Text>
+      </TouchableOpacity>
 
       {/* Status pills */}
       <View style={styles.pillRow}>
@@ -228,24 +284,7 @@ export default function IdentityScreen() {
           </View>
         ))}
       </View>
-
-      {/* Debug */}
-      <View
-        style={[
-          styles.debugCard,
-          {backgroundColor: t.surfaceAlt, borderColor: t.border},
-        ]}>
-        <Text style={[styles.debugLabel, {color: t.textMuted}]}>
-          PUBLIC KEY
-        </Text>
-        <Text
-          style={[styles.debugKey, {color: t.textMuted}]}
-          numberOfLines={2}
-          ellipsizeMode="middle">
-          {identity?.publicKeyBase58}
-        </Text>
-      </View>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -253,10 +292,9 @@ export default function IdentityScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
     paddingHorizontal: 24,
     paddingTop: 56,
-    paddingBottom: 16,
+    paddingBottom: 90,
   },
   center: {
     flex: 1,
@@ -315,6 +353,20 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   headerSub: {fontSize: 14, fontFamily: Font.regular},
+
+  qrWrap: {alignSelf: 'center', marginVertical: 16, borderRadius: 12, overflow: 'hidden'},
+  buttonRow: {flexDirection: 'row', gap: 10},
+  flexButton: {flex: 1},
+  scanButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginBottom: 16,
+  },
+  scanButtonText: {color: '#FFFFFF', fontSize: 15, fontFamily: Font.semiBold},
 
   // Card
   card: {

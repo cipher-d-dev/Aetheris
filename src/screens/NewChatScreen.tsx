@@ -15,6 +15,9 @@ import {useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
 import {displayName} from '../store/messagesStore';
 import {formatShortId} from '../crypto/encoding';
+import {addResultMessage, scanContact} from '../contacts/addContact';
+import {parseContactLink} from '../contacts/contactLink';
+import {dbAddContact} from '../db/database';
 
 /** Header + list of people we know about (met directly or seen in routing). */
 export function usePeople() {
@@ -75,8 +78,19 @@ export default function NewChatScreen() {
   const [error, setError] = useState('');
   const people = usePeople();
 
+  const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? '');
+
+  const scan = async () => {
+    const result = await scanContact(selfId);
+    if (result.ok) navigation.replace('Chat', {conversationId: result.contact.id});
+    else if (result.reason !== 'cancelled') setError(addResultMessage(result));
+  };
+
   const start = () => {
-    const id = dbResolvePeerId(input);
+    // Pasted contact links carry a name too.
+    const card = parseContactLink(input);
+    if (card && card.id !== selfId) dbAddContact(card.id, card.name, false);
+    const id = card?.id ?? dbResolvePeerId(input);
     if (!id) {
       setError("Unknown ID. Paste their full ID, or use a short ID of someone you've met on the mesh.");
       return;
@@ -98,7 +112,7 @@ export default function NewChatScreen() {
       <View style={[styles.inputWrap, {backgroundColor: t.surface, borderColor: error ? t.errorText : t.border}]}>
         <TextInput
           style={[styles.input, {color: t.text}]}
-          placeholder="Their ID (full, or XXXX-XXXX)"
+          placeholder="Paste their link or ID"
           placeholderTextColor={t.textMuted}
           value={input}
           onChangeText={v => {
@@ -114,6 +128,11 @@ export default function NewChatScreen() {
         </TouchableOpacity>
       </View>
       {error !== '' && <Text style={[styles.error, {color: t.errorText}]}>{error}</Text>}
+
+      <TouchableOpacity style={[styles.scan, {backgroundColor: t.accent}]} onPress={scan} activeOpacity={0.8}>
+        <Icon name="maximize" size={16} color="#fff" />
+        <Text style={styles.scanText}>Scan their QR code</Text>
+      </TouchableOpacity>
 
       <Text style={[styles.section, {color: t.textMuted}]}>PEOPLE YOU'VE SEEN ON THE MESH</Text>
       <FlatList
@@ -146,6 +165,8 @@ export const styles = StyleSheet.create({
   inputWrap: {flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14},
   input: {flex: 1, height: 50, fontSize: 15, fontFamily: Font.regular},
   error: {marginHorizontal: 20, marginTop: 8, fontSize: 12, fontFamily: Font.regular},
+  scan: {flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', marginHorizontal: 20, marginTop: 12, borderRadius: 14, paddingVertical: 13},
+  scanText: {color: '#fff', fontSize: 15, fontFamily: Font.semiBold},
   section: {fontSize: 10, fontFamily: Font.bold, letterSpacing: 2, marginHorizontal: 20, marginTop: 24, marginBottom: 8},
   empty: {fontSize: 13, fontFamily: Font.regular, lineHeight: 19},
   person: {flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 8},

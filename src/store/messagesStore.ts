@@ -42,18 +42,16 @@ export function groupIdOf(conversationId: string): string {
   return conversationId.slice(GROUP_PREFIX.length);
 }
 
-/** Best display name for a node: their alias if known, else short ID. */
+/**
+ * Best display name for a node: the nickname you gave them, else the name
+ * they chose (alias), else their short ID.
+ */
 export function displayName(nodeId: string, alias?: string): string {
-  const a = alias ?? safePeerAlias(nodeId);
-  return a ? `${a}` : formatShortId(nodeId);
-}
-
-function safePeerAlias(nodeId: string): string | undefined {
+  let peer = null;
   try {
-    return dbGetPeer(nodeId)?.alias;
-  } catch {
-    return undefined;
-  }
+    peer = dbGetPeer(nodeId);
+  } catch {}
+  return peer?.nickname ?? alias ?? peer?.alias ?? formatShortId(nodeId);
 }
 
 export function conversationTitle(id: string): string {

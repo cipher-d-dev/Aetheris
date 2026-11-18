@@ -71,6 +71,9 @@ export const AetherisBridge = {
     AetherisNativeModule.playAudio(id, data),
   stopAudio: (): Promise<void> => AetherisNativeModule.stopAudio(),
 
+  /** Opens the system QR scanner. Resolves the text, or null if cancelled. */
+  scanQrCode: (): Promise<string | null> => AetherisNativeModule.scanQrCode(),
+
   // ─── Notifications ──────────────────────────────────────────────────────
   showMessageNotification: (title: string, body: string): Promise<boolean> =>
     AetherisNativeModule.showMessageNotification(title, body),

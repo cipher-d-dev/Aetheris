@@ -27,7 +27,7 @@ import {
 import {MAX_MEDIA_BASE64, useMeshService} from '../store/meshService';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
-import {dbGetGroup, dbResolvePeerId} from '../db/database';
+import {dbGetGroup, dbGetPeer, dbResolvePeerId} from '../db/database';
 import {useIdentityStore} from '../store/identityStore';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -192,6 +192,8 @@ export default function ChatScreen() {
     return () => clearInterval(timer);
   }, [recording]);
 
+  const verified = !isGroup && (dbGetPeer(conversationId)?.verified ?? false);
+
   // Header subtitle: how reachable is this person right now?
   let subtitle: string;
   if (isGroup) {
@@ -330,15 +332,24 @@ export default function ChatScreen() {
           style={[styles.back, {backgroundColor: t.surfaceAlt, borderColor: t.border}]}>
           <Icon name="arrow-left" size={18} color={t.text} />
         </TouchableOpacity>
-        <View style={{flex: 1}}>
+        <TouchableOpacity
+          style={{flex: 1}}
+          disabled={isGroup}
+          onPress={() => navigation.navigate('Contact', {id: conversationId})}>
           <Text style={[styles.title, {color: t.text}]} numberOfLines={1}>
             {conversationTitle(conversationId)}
           </Text>
           <Text style={[styles.subtitle, {color: t.textMuted}]} numberOfLines={1}>
             {subtitle}
           </Text>
-        </View>
-        <Icon name={isGroup ? 'users' : 'lock'} size={16} color={t.textMuted} />
+        </TouchableOpacity>
+        {isGroup ? (
+          <Icon name="users" size={16} color={t.textMuted} />
+        ) : verified ? (
+          <Icon name="shield" size={16} color={t.successText} />
+        ) : (
+          <Icon name="lock" size={16} color={t.textMuted} />
+        )}
       </View>
 
       <FlatList

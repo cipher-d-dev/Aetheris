@@ -12,6 +12,7 @@ import SettingsScreen from '../screens/SettingsScreen';
 import ChatScreen from '../screens/ChatScreen';
 import NewChatScreen from '../screens/NewChatScreen';
 import NewGroupScreen from '../screens/NewGroupScreen';
+import ContactScreen from '../screens/ContactScreen';
 
 // ─── Stack for the Messages tab ───────────────────────────────────────────────
 // MessagesScreen (conversation list) → NewChat / NewGroup → ChatScreen
@@ -31,6 +32,7 @@ function MessagesStackNavigator() {
             <MessagesStack.Screen name="NewChat" component={NewChatScreen} />
             <MessagesStack.Screen name="NewGroup" component={NewGroupScreen} />
             <MessagesStack.Screen name="Chat" component={ChatScreen} />
+            <MessagesStack.Screen name="Contact" component={ContactScreen} />
         </MessagesStack.Navigator>
     );
 }
