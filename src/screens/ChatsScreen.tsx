@@ -124,7 +124,8 @@ export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const conversations = useMessagesStore(s => s.conversations);
-  const {loadConversations, deleteConversation} = useMessagesStore.getState();
+  const {loadConversations} = useMessagesStore.getState();
+  const {deleteConversation} = useMeshService.getState();
   const routes = useMeshService(s => s.routes);
   const [query, setQuery] = useState('');
 

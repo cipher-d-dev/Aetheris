@@ -30,6 +30,7 @@ import {
   dbUpsertPeer,
   dbAddGroupDelivery,
   dbDeleteMessage,
+  dbDeleteConversation,
   dbGetMessage,
 } from '../db/database';
 import {
@@ -149,6 +150,7 @@ interface MeshState {
   createGroup: (name: string, memberIds: string[]) => string;
   /** Delete on this phone; also stops delivery if it hasn't arrived yet. */
   deleteMessage: (messageId: string) => void;
+  deleteConversation: (conversationId: string) => void;
   /** Send a failed message again as a new message. */
   retryMessage: (messageId: string) => Promise<void>;
 }
@@ -484,6 +486,16 @@ export const useMeshService = create<MeshState>((set, get) => {
       for (const id of [messageId, ...subs]) node?.cancel(id);
       set({carrying: node?.carryCount() ?? 0, carryingForOthers: node?.carryForOthersCount() ?? 0});
       useMessagesStore.getState().refresh(conversationId ?? undefined);
+    },
+
+    deleteConversation: (conversationId: string) => {
+      try {
+        for (const id of dbDeleteConversation(conversationId)) node?.cancel(id);
+      } catch (e) {
+        console.warn('[meshService] deleteConversation failed', e);
+      }
+      set({carrying: node?.carryCount() ?? 0, carryingForOthers: node?.carryForOthersCount() ?? 0});
+      useMessagesStore.getState().dropConversation(conversationId);
     },
 
     retryMessage: async (messageId: string) => {

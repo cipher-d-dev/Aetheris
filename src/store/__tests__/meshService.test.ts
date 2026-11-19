@@ -191,6 +191,20 @@ describe('meshService with a peer phone', () => {
     expect(conv[0].status).not.toBe('failed'); // queued again (and sprayed to Bob)
   });
 
+  it('deleting a chat stops delivery of its pending messages', async () => {
+    const erin = await keypair();
+    const svc = useMeshService.getState();
+    const before = svc.carrying;
+    await svc.sendToConversation(erin.id, {kind: 'text', text: 'one'});
+    await svc.sendToConversation(erin.id, {kind: 'text', text: 'two'});
+    expect(useMeshService.getState().carrying).toBe(before + 2);
+
+    useMeshService.getState().deleteConversation(erin.id);
+    expect(dbGetConversation(erin.id)).toEqual([]);
+    expect(useMeshService.getState().carrying).toBe(before);
+    expect(useMessagesStore.getState().messages[erin.id]).toBeUndefined();
+  });
+
   it('marks routes down when the link drops', async () => {
     handler(bridge.onLinkDown as any)({linkId: 'L1'});
     expect(useMeshService.getState().neighbours).toEqual([]);

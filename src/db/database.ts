@@ -179,8 +179,23 @@ export function dbDeleteMessage(id: string): string[] {
   return subs;
 }
 
-export function dbDeleteConversation(conversationId: string): void {
+/** Delete a conversation on this phone. Returns the ids of in-flight messages (and group sub-IDs) to cancel. */
+export function dbDeleteConversation(conversationId: string): string[] {
+  const ids = rows(
+    `SELECT id FROM messages WHERE conversation_id = ? AND is_outbound = 1 AND status IN ('pending','sent')`,
+    [conversationId],
+  ).map(r => r.id);
+  const subs = rows(
+    `SELECT sub_id FROM group_deliveries
+      WHERE delivered = 0 AND message_id IN (SELECT id FROM messages WHERE conversation_id = ?)`,
+    [conversationId],
+  ).map(r => r.sub_id);
+  run(
+    'DELETE FROM group_deliveries WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ?)',
+    [conversationId],
+  );
   run('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
+  return [...ids, ...subs];
 }
 
 /** Our own messages that are still waiting for an ACK (for UI only). */
