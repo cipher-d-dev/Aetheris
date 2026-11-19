@@ -1,5 +1,8 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  ScrollView,
   View,
   Text,
   StyleSheet,
@@ -179,7 +182,12 @@ export default function ChatScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const nearBottom = useRef(true);
+  const forceStick = useRef(false);
+  const lastSeenId = useRef<string | undefined>(undefined);
+  const lastOffset = useRef(0);
 
   useEffect(() => {
     loadMessages(conversationId);
@@ -213,7 +221,53 @@ export default function ChatScreen() {
         .join(', ')
     : presenceText(conversationId, routes);
 
+  const last = messages[messages.length - 1];
+  const lastId = last?.id;
+  const lastInbound = last ? !last.isOutbound : false;
+  useEffect(() => {
+    if (lastId === lastSeenId.current) return;
+    lastSeenId.current = lastId;
+    if (lastInbound && !nearBottom.current) setShowNew(true);
+  }, [lastId, lastInbound]);
+
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const {contentOffset, layoutMeasurement, contentSize} = e.nativeEvent;
+    const y = contentOffset.y;
+    if (contentSize.height - (y + layoutMeasurement.height) < 80) {
+      nearBottom.current = true;
+      setShowNew(false);
+    } else if (y < lastOffset.current) {
+      // Only an upward scroll means the user left the bottom. Our own jumps
+      // to the bottom only move down, and their scroll event can arrive after
+      // a new message has already grown the content.
+      nearBottom.current = false;
+    }
+    lastOffset.current = y;
+  };
+
+  // Scroll the underlying ScrollView, which uses the real content height.
+  // FlatList.scrollToEnd uses the list's own size estimate, which can lag
+  // behind the newest message and leave it just out of view.
+  const scrollToBottom = (animated: boolean) => {
+    const scrollView = listRef.current?.getNativeScrollRef() as ScrollView | null | undefined;
+    scrollView?.scrollToEnd({animated});
+  };
+
+  const onContentSizeChange = () => {
+    if (nearBottom.current || forceStick.current) {
+      scrollToBottom(false);
+      nearBottom.current = true;
+      forceStick.current = false;
+    }
+  };
+
+  const jumpToNew = () => {
+    scrollToBottom(true);
+    setShowNew(false);
+  };
+
   const send = async (content: Parameters<typeof sendToConversation>[1]) => {
+    forceStick.current = true;
     setError('');
     if (status !== 'running') {
       setError("Can't send yet — Aetheris is still starting. Check Bluetooth is on.");
@@ -378,12 +432,15 @@ export default function ChatScreen() {
         </Pressable>
       </View>
 
+      <View style={styles.listWrap}>
       <FlatList
         ref={listRef}
         data={items}
         keyExtractor={i => i.key}
         contentContainerStyle={styles.list}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({animated: false})}
+        onContentSizeChange={onContentSizeChange}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
         ListHeaderComponent={
           <View style={[styles.notice, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
             <Icon name="lock-closed" size={13} color={t.textMuted} />
@@ -414,6 +471,17 @@ export default function ChatScreen() {
           )
         }
       />
+      {showNew && (
+        <Pressable
+          onPress={jumpToNew}
+          accessibilityRole="button"
+          accessibilityLabel="Scroll to new messages"
+          style={[styles.newPill, {backgroundColor: t.surface}]}>
+          <Icon name="arrow-down" size={14} color={t.primary} />
+          <Text style={[styles.newPillText, {color: t.text}]}>New messages</Text>
+        </Pressable>
+      )}
+      </View>
 
       {!isGroup && !nearby && messages.some(m => m.isOutbound && m.status !== 'delivered' && m.status !== 'failed') && (
         <View style={[styles.away, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
@@ -484,6 +552,9 @@ const styles = StyleSheet.create({
   headerWho: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 11},
   headerName: {fontFamily: Font.semiBold, fontSize: 16.5},
   headerSub: {fontFamily: Font.medium, fontSize: 12.5, marginTop: 1},
+  listWrap: {flex: 1},
+  newPill: {position: 'absolute', bottom: 12, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18, shadowColor: '#0F1419', shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: {width: 0, height: 2}, elevation: 4},
+  newPillText: {fontFamily: Font.semiBold, fontSize: 13},
   list: {paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12, flexGrow: 1},
   notice: {flexDirection: 'row', gap: 8, alignSelf: 'center', maxWidth: 320, padding: 10, paddingHorizontal: 12, borderRadius: 12, marginBottom: 12, alignItems: 'flex-start'},
   noticeText: {flex: 1, fontFamily: Font.regular, fontSize: 12, lineHeight: 17, textAlign: 'center'},
