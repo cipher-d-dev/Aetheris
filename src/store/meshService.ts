@@ -244,6 +244,7 @@ export const useMeshService = create<MeshState>((set, get) => {
       isOutbound: false,
       route: m.routing.hops,
       createdAt: Math.min(m.routing.originTimestamp, Date.now()),
+      receivedAt: Date.now(),
       expiresAt: m.routing.expiresAt,
       read: visible,
     });

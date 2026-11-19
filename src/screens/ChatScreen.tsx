@@ -38,6 +38,7 @@ import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import MessageMenu, {MessageMenuAction} from '../ui/MessageMenu';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
+import {isLate, lateAccessibilityLabel, lateLabel} from '../ui/late';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 import {routeText} from '../ui/route';
 
@@ -136,7 +137,15 @@ function Bubble({
 
   const timeAndTicks = (
     <View style={styles.meta}>
-      <Text style={[styles.metaText, {color: meta}]}>{formatClock(m.createdAt)}</Text>
+      {isLate(m) ? (
+        <Text
+          accessibilityLabel={lateAccessibilityLabel(m)}
+          style={[styles.metaText, styles.lateText, {color: meta}]}>
+          {lateLabel(m)}
+        </Text>
+      ) : (
+        <Text style={[styles.metaText, {color: meta}]}>{formatClock(m.createdAt)}</Text>
+      )}
       {out && <Ticks m={m} color={meta} onPress={onStatus} />}
     </View>
   );
@@ -661,6 +670,7 @@ const styles = StyleSheet.create({
   metaOnImage: {right: 10, bottom: 8, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1},
   meta: {flexDirection: 'row', alignItems: 'center', gap: 3},
   metaText: {fontFamily: Font.medium, fontSize: 11},
+  lateText: {flexShrink: 1},
   audio: {flexDirection: 'row', alignItems: 'center', gap: 10, width: 230, paddingBottom: 14},
   playButton: {width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center'},
   wave: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 28},
