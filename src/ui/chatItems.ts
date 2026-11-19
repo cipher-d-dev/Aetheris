@@ -1,4 +1,5 @@
 import type {ChatMessage} from '../store/messagesStore';
+import {isLate} from './late';
 
 export type ChatItem =
   | {type: 'day'; key: string; ts: number}
@@ -26,4 +27,19 @@ export function buildItems(messages: ChatMessage[], isGroup: boolean, unreadAnch
     items.push({type: 'msg', key: m.id, m, first: !sameAsPrev, last: !sameAsNext, showSender: isGroup && !sameAsPrev});
   });
   return items;
+}
+
+/**
+ * Ids of late inbound messages (see isLate) not in `prevIds` that sit above
+ * the last message, in list order. A message that is simply appended is not
+ * "above", and neither is an on-time reply that lands a slot up because it
+ * was sent a moment before our own latest message.
+ */
+export function findArrivalsAbove(prevIds: Set<string>, messages: ChatMessage[]): string[] {
+  const ids: string[] = [];
+  for (let i = 0; i < messages.length - 1; i++) {
+    const m = messages[i];
+    if (!m.isOutbound && !prevIds.has(m.id) && isLate(m)) ids.push(m.id);
+  }
+  return ids;
 }

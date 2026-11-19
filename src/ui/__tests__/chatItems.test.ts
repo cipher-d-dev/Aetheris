@@ -1,5 +1,5 @@
 import {describe, expect, it} from '@jest/globals';
-import {buildItems} from '../chatItems';
+import {buildItems, findArrivalsAbove} from '../chatItems';
 import type {ChatMessage} from '../../store/messagesStore';
 
 const msg = (id: string, createdAt: number): ChatMessage => ({
@@ -34,5 +34,37 @@ describe('buildItems', () => {
 
   it('skips the divider when the anchor is not in the loaded list', () => {
     expect(keys(buildItems(list, false, 'gone'))).toEqual(['day-m1', 'm1', 'm2', 'm3']);
+  });
+});
+
+describe('findArrivalsAbove', () => {
+  const out = (id: string, createdAt: number): ChatMessage => ({...msg(id, createdAt), isOutbound: true});
+
+  it('does not count an appended inbound message', () => {
+    const list = [msg('m1', T), msg('m2', T + 1000), msg('m3', T + 2000)];
+    expect(findArrivalsAbove(new Set(['m1', 'm2']), list)).toEqual([]);
+  });
+
+  const HOUR = 3600 * 1000;
+  const late = (id: string, createdAt: number): ChatMessage => ({...msg(id, createdAt), receivedAt: createdAt + 3 * HOUR});
+
+  it('counts a late inbound message inserted above the last one, in order', () => {
+    const list = [msg('m1', T), late('late1', T + 500), msg('m2', T + 1000), late('late2', T + 1500), msg('m3', T + 2000)];
+    expect(findArrivalsAbove(new Set(['m1', 'm2', 'm3']), list)).toEqual(['late1', 'late2']);
+  });
+
+  it('ignores an on-time reply that lands just above our latest message', () => {
+    const list = [msg('m1', T), {...msg('reply', T + 900), receivedAt: T + 1100}, msg('mine', T + 1000)];
+    expect(findArrivalsAbove(new Set(['m1', 'mine']), list)).toEqual([]);
+  });
+
+  it('ignores outbound messages', () => {
+    const list = [msg('m1', T), out('o1', T + 500), msg('m2', T + 1000)];
+    expect(findArrivalsAbove(new Set(['m1', 'm2']), list)).toEqual([]);
+  });
+
+  it('ignores messages already seen', () => {
+    const list = [msg('m1', T), msg('m2', T + 1000)];
+    expect(findArrivalsAbove(new Set(['m1', 'm2']), list)).toEqual([]);
   });
 });

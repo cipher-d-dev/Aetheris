@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -38,7 +38,7 @@ import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import MessageMenu, {MessageMenuAction} from '../ui/MessageMenu';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
-import {buildItems} from '../ui/chatItems';
+import {buildItems, findArrivalsAbove} from '../ui/chatItems';
 import {isLate, lateAccessibilityLabel, lateLabel} from '../ui/late';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 import {routeText} from '../ui/route';
@@ -110,6 +110,7 @@ function Bubble({
   onImage,
   onLongPress,
   onStatus,
+  highlight,
 }: {
   m: ChatMessage;
   first: boolean;
@@ -120,6 +121,7 @@ function Bubble({
   onImage: (uri: string) => void;
   onLongPress: () => void;
   onStatus: () => void;
+  highlight: boolean;
 }) {
   const {theme: t} = useThemeStore();
   const out = m.isOutbound;
@@ -152,7 +154,13 @@ function Bubble({
   );
 
   return (
-    <View style={[styles.row, out ? styles.rowOut : styles.rowIn, last && {marginBottom: 6}]}>
+    <View
+      style={[
+        styles.row,
+        out ? styles.rowOut : styles.rowIn,
+        last && {marginBottom: 6},
+        highlight && {backgroundColor: t.primarySoft},
+      ]}>
       <Pressable
         {...(m.kind === 'audio' && {
           accessibilityRole: 'button' as const,
@@ -211,7 +219,8 @@ export default function ChatScreen() {
   const isGroup = isGroupConversation(conversationId);
   const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? '');
 
-  const messages = useMessagesStore(s => s.messages[conversationId]) ?? [];
+  const stored = useMessagesStore(s => s.messages[conversationId]);
+  const messages = useMemo(() => stored ?? [], [stored]);
   const anchor = useMessagesStore(s => s.unreadAnchor);
   const {loadMessages, setActiveConversation} = useMessagesStore.getState();
   const {sendToConversation, routes, status, deleteMessage, retryMessage} = useMeshService();
@@ -225,6 +234,9 @@ export default function ChatScreen() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [aboveId, setAboveId] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [menuFor, setMenuFor] = useState<ChatMessage | null>(null);
   const listRef = useRef<FlatList>(null);
   // Known before the first render (nothing is marked read yet), so a chat that
@@ -233,6 +245,8 @@ export default function ChatScreen() {
   const nearBottom = useRef(!opensAtDivider);
   const forceStick = useRef(false);
   const lastSeenId = useRef<string | undefined>(undefined);
+  // Ids already shown; null until the first non-empty load has been recorded.
+  const seenIds = useRef<Set<string> | null>(null);
   const lastOffset = useRef(0);
   // While true, every layout change re-pins the divider: the first screens of
   // messages render in batches. Ends when the user drags or after a moment.
@@ -304,6 +318,22 @@ export default function ChatScreen() {
     if (lastInbound && !nearBottom.current) setShowNew(true);
   }, [lastId, lastInbound]);
 
+  useEffect(() => {
+    if (messages.length === 0) return;
+    // The first load is the baseline; the unread divider covers those messages.
+    const arrivals =
+      seenIds.current && !pendingAnchorScroll.current ? findArrivalsAbove(seenIds.current, messages) : [];
+    seenIds.current = new Set(messages.map(m => m.id));
+    if (arrivals.length === 0) return;
+    const first = messages.findIndex(m => m.id === arrivals[0]);
+    setAboveId(prev => {
+      const prevIndex = prev ? messages.findIndex(m => m.id === prev) : -1;
+      return prevIndex >= 0 && prevIndex < first ? prev : arrivals[0];
+    });
+  }, [messages]);
+
+  useEffect(() => () => clearTimeout(highlightTimer.current), []);
+
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const {contentOffset, layoutMeasurement, contentSize} = e.nativeEvent;
     const y = contentOffset.y;
@@ -341,11 +371,16 @@ export default function ChatScreen() {
     listRef.current?.scrollToIndex({index, viewPosition: 0, animated: false});
   };
 
-  /** Scroll so the message sits at the top of the list. Not wired up yet; reused by later tasks. */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const scrollToMessage = (id: string, _opts?: {highlight?: boolean}) => {
+  /** Scroll so the message sits at the top of the list, optionally tinting it for a moment. */
+  const scrollToMessage = (id: string, opts?: {highlight?: boolean}) => {
     const index = items.findIndex(i => i.type === 'msg' && i.key === id);
-    if (index >= 0) scrollToIndex(index);
+    if (index < 0) return;
+    scrollToIndex(index);
+    if (opts?.highlight) {
+      setHighlightId(id);
+      clearTimeout(highlightTimer.current);
+      highlightTimer.current = setTimeout(() => setHighlightId(null), 1500);
+    }
   };
 
   // Items are not measured up front: jump near the target, then retry once it has been laid out.
@@ -371,6 +406,11 @@ export default function ChatScreen() {
       nearBottom.current = true;
       forceStick.current = false;
     }
+  };
+
+  const jumpToAbove = () => {
+    if (aboveId) scrollToMessage(aboveId, {highlight: true});
+    setAboveId(null);
   };
 
   const jumpToNew = () => {
@@ -605,6 +645,7 @@ export default function ChatScreen() {
               first={item.first}
               last={item.last}
               showSender={item.showSender}
+              highlight={highlightId === item.m.id}
               playing={playingId === item.m.id}
               onPlay={() => play(item.m)}
               onImage={setViewer}
@@ -614,14 +655,16 @@ export default function ChatScreen() {
           )
         }
       />
-      {showNew && (
+      {(aboveId || showNew) && (
         <Pressable
-          onPress={jumpToNew}
+          onPress={aboveId ? jumpToAbove : jumpToNew}
           accessibilityRole="button"
-          accessibilityLabel="Scroll to new messages"
+          accessibilityLabel={aboveId ? 'New message above, jump to it' : 'Scroll to new messages'}
           style={[styles.newPill, {backgroundColor: t.surface}]}>
-          <Icon name="arrow-down" size={14} color={t.primary} />
-          <Text style={[styles.newPillText, {color: t.text}]}>New messages</Text>
+          <Icon name={aboveId ? 'arrow-up' : 'arrow-down'} size={14} color={t.primary} />
+          <Text style={[styles.newPillText, {color: t.text}]}>
+            {aboveId ? 'New message above' : 'New messages'}
+          </Text>
         </Pressable>
       )}
       </View>
