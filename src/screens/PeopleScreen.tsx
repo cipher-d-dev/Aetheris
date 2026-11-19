@@ -4,7 +4,7 @@ import {useNavigation, useRoute} from '@react-navigation/native';
 import {Font, Type, useThemeStore} from '../theme';
 import {useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
-import {displayName} from '../store/messagesStore';
+import {displayName, useMessagesStore} from '../store/messagesStore';
 import {dbListPeers} from '../db/database';
 import {formatShortId} from '../crypto/encoding';
 import Avatar from '../ui/Avatar';
@@ -24,6 +24,8 @@ interface Person {
 export function usePeople(): Person[] {
   const selfId = useIdentityStore(s => s.identity?.publicKeyBase58);
   const routes = useMeshService(s => s.routes);
+  // Re-derive when conversations reload so renames show immediately.
+  const conversations = useMessagesStore(s => s.conversations);
   return useMemo(() => {
     let known: {id: string; lastSeen: number}[] = [];
     try {
@@ -46,7 +48,8 @@ export function usePeople(): Person[] {
     return people.sort((a, b) =>
       a.nearby !== b.nearby ? (a.nearby ? -1 : 1) : a.nearby ? a.name.localeCompare(b.name) : b.lastSeen - a.lastSeen,
     );
-  }, [routes, selfId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- conversations is a refresh trigger only
+  }, [routes, selfId, conversations]);
 }
 
 export function PersonRow({person, onPress, right}: {person: Person; onPress: () => void; right?: React.ReactNode}) {
