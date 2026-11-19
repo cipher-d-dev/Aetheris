@@ -140,6 +140,17 @@ export function dbMarkConversationRead(conversationId: string): void {
   run('UPDATE messages SET read = 1 WHERE conversation_id = ?', [conversationId]);
 }
 
+/** The earliest unread inbound message (by created_at, so late arrivals count) and how many are unread. */
+export function dbFirstUnread(conversationId: string): {id: string; count: number} | null {
+  const r = rows(
+    `SELECT id, (SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND is_outbound = 0 AND read = 0) AS n
+     FROM messages WHERE conversation_id = ? AND is_outbound = 0 AND read = 0
+     ORDER BY created_at ASC LIMIT 1`,
+    [conversationId, conversationId],
+  )[0];
+  return r ? {id: r.id, count: r.n} : null;
+}
+
 export interface ConversationRow {
   id: string;
   /** Status of the last message if we sent it (for ticks in the list) */

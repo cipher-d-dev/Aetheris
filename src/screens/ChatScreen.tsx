@@ -30,7 +30,7 @@ import {
 import {MAX_MEDIA_BASE64, useMeshService} from '../store/meshService';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
-import {dbGetGroup, dbGroupDeliveries} from '../db/database';
+import {dbFirstUnread, dbGetGroup, dbGroupDeliveries} from '../db/database';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
@@ -38,6 +38,7 @@ import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import MessageMenu, {MessageMenuAction} from '../ui/MessageMenu';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
+import {buildItems} from '../ui/chatItems';
 import {isLate, lateAccessibilityLabel, lateLabel} from '../ui/late';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 import {routeText} from '../ui/route';
@@ -211,6 +212,7 @@ export default function ChatScreen() {
   const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? '');
 
   const messages = useMessagesStore(s => s.messages[conversationId]) ?? [];
+  const anchor = useMessagesStore(s => s.unreadAnchor);
   const {loadMessages, setActiveConversation} = useMessagesStore.getState();
   const {sendToConversation, routes, status, deleteMessage, retryMessage} = useMeshService();
 
@@ -225,10 +227,37 @@ export default function ChatScreen() {
   const [showNew, setShowNew] = useState(false);
   const [menuFor, setMenuFor] = useState<ChatMessage | null>(null);
   const listRef = useRef<FlatList>(null);
-  const nearBottom = useRef(true);
+  // Known before the first render (nothing is marked read yet), so a chat that
+  // opens at the unread divider never starts heading for the bottom.
+  const [opensAtDivider] = useState(() => dbFirstUnread(conversationId) !== null);
+  const nearBottom = useRef(!opensAtDivider);
   const forceStick = useRef(false);
   const lastSeenId = useRef<string | undefined>(undefined);
   const lastOffset = useRef(0);
+  // While true, every layout change re-pins the divider: the first screens of
+  // messages render in batches. Ends when the user drags or after a moment.
+  const pendingAnchorScroll = useRef(opensAtDivider);
+  const pinTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scrollRetries = useRef({left: 0});
+
+  const pinnedDivider = useRef(false);
+  const lastView = useRef<{y: number; height: number; contentHeight: number} | null>(null);
+  useEffect(() => {
+    if (!opensAtDivider) return;
+    pinTimer.current = setTimeout(() => {
+      pendingAnchorScroll.current = false;
+      if (pinnedDivider.current) {
+        // Scroll events during pinning were ignored; take the real position now.
+        const v = lastView.current;
+        nearBottom.current = v ? v.contentHeight - (v.y + v.height) < 80 : false;
+      } else {
+        // The first unread message wasn't among the loaded ones: open at the bottom.
+        nearBottom.current = true;
+        scrollToBottomRef.current(false);
+      }
+    }, 1000);
+    return () => clearTimeout(pinTimer.current);
+  }, [opensAtDivider]);
 
   useEffect(() => {
     loadMessages(conversationId);
@@ -262,6 +291,10 @@ export default function ChatScreen() {
         .join(', ')
     : presenceText(conversationId, routes);
 
+  const unreadAnchor = anchor?.conversationId === conversationId ? anchor : null;
+  const items = buildItems(messages, isGroup, unreadAnchor?.id);
+  const dividerIndex = items.findIndex(i => i.type === 'unread');
+
   const last = messages[messages.length - 1];
   const lastId = last?.id;
   const lastInbound = last ? !last.isOutbound : false;
@@ -274,6 +307,12 @@ export default function ChatScreen() {
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const {contentOffset, layoutMeasurement, contentSize} = e.nativeEvent;
     const y = contentOffset.y;
+    lastView.current = {y, height: layoutMeasurement.height, contentHeight: contentSize.height};
+    // While the divider is being pinned, these are our own interim jumps.
+    if (pendingAnchorScroll.current) {
+      lastOffset.current = y;
+      return;
+    }
     if (contentSize.height - (y + layoutMeasurement.height) < 80) {
       nearBottom.current = true;
       setShowNew(false);
@@ -293,8 +332,40 @@ export default function ChatScreen() {
     const scrollView = listRef.current?.getNativeScrollRef() as ScrollView | null | undefined;
     scrollView?.scrollToEnd({animated});
   };
+  const scrollToBottomRef = useRef(scrollToBottom);
+  scrollToBottomRef.current = scrollToBottom;
+
+  const scrollToIndex = (index: number) => {
+    scrollRetries.current.left = 3;
+    nearBottom.current = false;
+    listRef.current?.scrollToIndex({index, viewPosition: 0, animated: false});
+  };
+
+  /** Scroll so the message sits at the top of the list. Not wired up yet; reused by later tasks. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const scrollToMessage = (id: string, _opts?: {highlight?: boolean}) => {
+    const index = items.findIndex(i => i.type === 'msg' && i.key === id);
+    if (index >= 0) scrollToIndex(index);
+  };
+
+  // Items are not measured up front: jump near the target, then retry once it has been laid out.
+  const onScrollToIndexFailed = (info: {index: number; averageItemLength: number}) => {
+    if (scrollRetries.current.left <= 0) return;
+    scrollRetries.current.left -= 1;
+    listRef.current?.scrollToOffset({offset: info.averageItemLength * info.index, animated: false});
+    setTimeout(
+      () => listRef.current?.scrollToIndex({index: info.index, viewPosition: 0, animated: false}),
+      100,
+    );
+  };
 
   const onContentSizeChange = () => {
+    if (pendingAnchorScroll.current && dividerIndex >= 0) {
+      pinnedDivider.current = true;
+      scrollToIndex(dividerIndex);
+      return;
+    }
+    if (pendingAnchorScroll.current) return; // divider not in the list yet
     if (nearBottom.current || forceStick.current) {
       scrollToBottom(false);
       nearBottom.current = true;
@@ -473,24 +544,6 @@ export default function ChatScreen() {
     return actions;
   };
 
-  type Item =
-    | {type: 'day'; key: string; ts: number}
-    | {type: 'msg'; key: string; m: ChatMessage; first: boolean; last: boolean; showSender: boolean};
-  const items: Item[] = [];
-  messages.forEach((m, i) => {
-    const prev = messages[i - 1];
-    const next = messages[i + 1];
-    const newDay = !prev || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString();
-    if (newDay) items.push({type: 'day', key: `day-${m.id}`, ts: m.createdAt});
-    const sameAsPrev = !newDay && prev && prev.senderId === m.senderId && m.createdAt - prev.createdAt < 120000;
-    const sameAsNext =
-      next &&
-      next.senderId === m.senderId &&
-      next.createdAt - m.createdAt < 120000 &&
-      new Date(next.createdAt).toDateString() === new Date(m.createdAt).toDateString();
-    items.push({type: 'msg', key: m.id, m, first: !sameAsPrev, last: !sameAsNext, showSender: isGroup && !sameAsPrev});
-  });
-
   const recording = recordingSince !== null;
 
   return (
@@ -520,7 +573,9 @@ export default function ChatScreen() {
         keyExtractor={i => i.key}
         contentContainerStyle={styles.list}
         onContentSizeChange={onContentSizeChange}
+        onScrollToIndexFailed={onScrollToIndexFailed}
         onScroll={onScroll}
+        onScrollBeginDrag={() => (pendingAnchorScroll.current = false)}
         scrollEventThrottle={16}
         ListHeaderComponent={
           <View style={[styles.notice, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
@@ -532,7 +587,13 @@ export default function ChatScreen() {
           </View>
         }
         renderItem={({item}) =>
-          item.type === 'day' ? (
+          item.type === 'unread' ? (
+            <View style={styles.dayWrap}>
+              <Text style={[styles.day, {color: t.textSub, backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
+                {unreadAnchor?.count === 1 ? '1 unread message' : `${unreadAnchor?.count} unread messages`}
+              </Text>
+            </View>
+          ) : item.type === 'day' ? (
             <View style={styles.dayWrap}>
               <Text style={[styles.day, {color: t.textSub, backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
                 {dayLabel(item.ts)}

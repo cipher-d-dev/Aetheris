@@ -6,6 +6,7 @@
  */
 import {create} from 'zustand';
 import {
+  dbFirstUnread,
   dbGetConversation,
   dbGetGroup,
   dbGetPeer,
@@ -76,6 +77,8 @@ interface MessagesState {
   messages: Record<string, ChatMessage[]>;
   /** Conversation currently on screen (no notifications / unread for it) */
   activeConversation: string | null;
+  /** First unread message at the moment the chat was opened; kept until it is left. */
+  unreadAnchor: {conversationId: string; id: string; count: number} | null;
   loadConversations: () => void;
   loadMessages: (conversationId: string) => void;
   setActiveConversation: (id: string | null) => void;
@@ -89,6 +92,7 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
   conversations: [],
   messages: {},
   activeConversation: null,
+  unreadAnchor: null,
 
   loadConversations: () => {
     try {
@@ -122,8 +126,12 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
   },
 
   setActiveConversation: id => {
-    set({activeConversation: id});
+    set({activeConversation: id, unreadAnchor: null});
     if (id) {
+      try {
+        const first = dbFirstUnread(id);
+        if (first) set({unreadAnchor: {conversationId: id, ...first}});
+      } catch {}
       try {
         dbMarkConversationRead(id);
       } catch {}
