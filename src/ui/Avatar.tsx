@@ -67,6 +67,8 @@ export default function Avatar({
       </View>
       {online && (
         <View
+          accessible
+          accessibilityLabel="Online"
           style={[
             styles.dot,
             {width: dot, height: dot, borderRadius: dot / 2, backgroundColor: t.online, borderColor: t.bg},

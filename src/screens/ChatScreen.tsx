@@ -33,6 +33,7 @@ import {dbGetGroup} from '../db/database';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
+import {statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 
@@ -68,10 +69,23 @@ function waveform(seed: string, bars = 28): number[] {
 // ─── Ticks ────────────────────────────────────────────────────────────────────
 
 function Ticks({m, color}: {m: ChatMessage; color: string}) {
-  if (m.status === 'pending') return <Icon name="time-outline" size={14} color={color} />;
-  if (m.status === 'failed') return <Icon name="alert-circle" size={15} color="#FFD7D9" />;
-  const delivered = m.status === 'delivered';
-  return <Icon name={delivered ? 'checkmark-done' : 'checkmark'} size={16} color={delivered ? '#FFFFFF' : color} />;
+  const icon =
+    m.status === 'pending' ? (
+      <Icon name="time-outline" size={14} color={color} />
+    ) : m.status === 'failed' ? (
+      <Icon name="alert-circle" size={15} color="#FFD7D9" />
+    ) : (
+      <Icon
+        name={m.status === 'delivered' ? 'checkmark-done' : 'checkmark'}
+        size={16}
+        color={m.status === 'delivered' ? '#FFFFFF' : color}
+      />
+    );
+  return (
+    <View accessible accessibilityLabel={statusLabel(m.status)}>
+      {icon}
+    </View>
+  );
 }
 
 // ─── Bubble ───────────────────────────────────────────────────────────────────
@@ -120,6 +134,10 @@ function Bubble({
   return (
     <View style={[styles.row, out ? styles.rowOut : styles.rowIn, last && {marginBottom: 6}]}>
       <Pressable
+        {...(m.kind === 'audio' && {
+          accessibilityRole: 'button' as const,
+          accessibilityLabel: playing ? 'Pause voice message' : 'Play voice message',
+        })}
         onLongPress={onLongPress}
         delayLongPress={300}
         onPress={() => (uri ? onImage(uri) : m.kind === 'audio' ? onPlay() : undefined)}

@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef} from 'react';
-import {View, Text, StyleSheet, SectionList, Pressable, Animated, Easing} from 'react-native';
+import {View, Text, StyleSheet, SectionList, Pressable, Animated, Easing, AccessibilityRole, AccessibilityState} from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {Font, Type, useThemeStore} from '../theme';
 import {useMeshService} from '../store/meshService';
@@ -52,10 +52,26 @@ export function usePeople(): Person[] {
   }, [routes, selfId, conversations]);
 }
 
-export function PersonRow({person, onPress, right}: {person: Person; onPress: () => void; right?: React.ReactNode}) {
+export function PersonRow({
+  person,
+  onPress,
+  right,
+  accessibilityRole = 'button',
+  accessibilityState,
+}: {
+  person: Person;
+  onPress: () => void;
+  right?: React.ReactNode;
+  accessibilityRole?: AccessibilityRole;
+  accessibilityState?: AccessibilityState;
+}) {
   const {theme: t} = useThemeStore();
   return (
-    <Pressable onPress={onPress} style={({pressed}) => [styles.row, pressed && {backgroundColor: t.surface}]}>
+    <Pressable
+      accessibilityRole={accessibilityRole}
+      accessibilityState={accessibilityState}
+      onPress={onPress}
+      style={({pressed}) => [styles.row, pressed && {backgroundColor: t.surface}]}>
       <Avatar id={person.id} name={person.name} size={48} online={person.nearby} />
       <View style={{flex: 1}}>
         <Text style={[styles.name, {color: t.text}]} numberOfLines={1}>

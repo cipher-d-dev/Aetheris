@@ -62,6 +62,8 @@ export default function NewGroupScreen() {
               <PersonRow
                 person={item}
                 onPress={() => toggle(item.id)}
+                accessibilityRole="checkbox"
+                accessibilityState={{checked: on}}
                 right={
                   <Icon
                     name={on ? 'checkmark-circle' : 'ellipse-outline'}

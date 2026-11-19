@@ -8,6 +8,7 @@ import {useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
+import {statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import Button from '../ui/Button';
 import {formatListTime, isNearby} from '../ui/presence';
@@ -37,6 +38,7 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
         </View>
         <View style={styles.rowLine}>
           {item.lastOutboundStatus && (
+            <View accessible accessibilityLabel={statusLabel(item.lastOutboundStatus)} style={{marginRight: -4}}>
             <Icon
               name={
                 item.lastOutboundStatus === 'pending'
@@ -55,8 +57,8 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
                   ? t.danger
                   : t.textMuted
               }
-              style={{marginRight: -4}}
             />
+            </View>
           )}
           <Text
             style={[styles.preview, {color: unread ? t.text : t.textSub}, unread && {fontFamily: Font.medium}]}
@@ -198,6 +200,8 @@ export default function ChatsScreen() {
 
       {conversations.length > 0 && (
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="New message"
           onPress={() => navigation.navigate('NewMessage')}
           style={({pressed}) => [
             styles.fab,
