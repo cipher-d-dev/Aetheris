@@ -10,7 +10,6 @@ import {
   TextInput,
   Pressable,
   KeyboardAvoidingView,
-  Platform,
   Image,
   Modal,
   Alert,
@@ -36,6 +35,7 @@ import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
 import {statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
+import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -186,6 +186,7 @@ function Bubble({
 export default function ChatScreen() {
   const {theme: t} = useThemeStore();
   const insets = useSafeAreaInsets();
+  const keyboardVisible = useKeyboardVisible();
   const navigation = useNavigation<any>();
   const conversationId: string = useRoute<any>().params?.conversationId ?? '';
   const isGroup = isGroupConversation(conversationId);
@@ -433,7 +434,7 @@ export default function ChatScreen() {
   const recording = recordingSince !== null;
 
   return (
-    <KeyboardAvoidingView style={{flex: 1, backgroundColor: t.chatBg}} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{flex: 1, backgroundColor: t.chatBg}} behavior={keyboardAvoidingBehavior()}>
       {/* Header */}
       <View style={[styles.header, {paddingTop: insets.top + 40, backgroundColor: t.bg, borderBottomColor: t.separator}]}>
         <IconButton accessibilityLabel="Back" name="chevron-back" size={26} onPress={() => navigation.goBack()} />
@@ -520,7 +521,7 @@ export default function ChatScreen() {
       )}
 
       {/* Composer */}
-      <View style={[styles.composer, {backgroundColor: t.bg}]}>
+      <View style={[styles.composer, {backgroundColor: t.bg, paddingBottom: 10 + (keyboardVisible ? 0 : insets.bottom)}]}>
         {recording ? (
           <>
             <IconButton accessibilityLabel="Discard recording" name="trash-outline" color={t.danger} onPress={cancelRecording} />
@@ -605,7 +606,7 @@ const styles = StyleSheet.create({
   awayText: {flex: 1, fontFamily: Font.regular, fontSize: 12.5, lineHeight: 17},
   error: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, borderRadius: 12},
   errorText: {flex: 1, fontFamily: Font.medium, fontSize: 13},
-  composer: {flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 10},
+  composer: {flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingTop: 8},
   inputWrap: {flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 22, minHeight: 44},
   input: {flex: 1, maxHeight: 130, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11, fontFamily: Font.regular, fontSize: 15.5},
   inlineIcon: {width: 40, height: 44},
