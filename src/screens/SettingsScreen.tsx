@@ -1,8 +1,8 @@
 import React, {useState} from 'react';
-import {View, Text, StyleSheet, ScrollView, Switch, Pressable, Modal, TextInput, Alert, Share} from 'react-native';
+import {View, Text, StyleSheet, ScrollView, Pressable, Modal, TextInput, Alert, Share} from 'react-native';
 import {Font, ThemeMode, Type, useThemeStore} from '../theme';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {useMeshService} from '../store/meshService';
+import {POWER_PROFILES, PowerMode, useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
 import {dbSetSetting} from '../db/database';
 import {formatLogTime, getLogLines} from '../utils/logBuffer';
@@ -17,6 +17,8 @@ const MODES: {mode: ThemeMode; label: string}[] = [
   {mode: 'light', label: 'Light'},
   {mode: 'dark', label: 'Dark'},
 ];
+
+const POWER_MODES: PowerMode[] = ['performance', 'balanced', 'saver'];
 
 export default function SettingsScreen() {
   const {theme: t, mode, setMode} = useThemeStore();
@@ -93,20 +95,26 @@ export default function SettingsScreen() {
         </Section>
 
         <Section title="Battery">
-          <ListRow
-            icon="battery-half-outline"
-            iconColor="#17C964"
-            title="Save battery"
-            subtitle="Looks for people less often. New people may take a minute to appear."
-            right={
-              <Switch
-                value={mesh.powerMode === 'saver'}
-                onValueChange={on => mesh.setPowerMode(on ? 'saver' : 'balanced')}
-                trackColor={{false: t.surfaceAlt, true: t.primary}}
-                thumbColor="#FFFFFF"
-              />
-            }
-          />
+          <View style={styles.segmentWrap}>
+            <View accessibilityRole="radiogroup" style={[styles.segment, {backgroundColor: t.surfaceAlt}]}>
+              {POWER_MODES.map(m => {
+                const on = mesh.powerMode === m;
+                return (
+                  <Pressable
+                    key={m}
+                    accessibilityRole="radio"
+                    accessibilityState={{checked: on}}
+                    onPress={() => mesh.setPowerMode(m)}
+                    style={[styles.segmentItem, on && {backgroundColor: t.bg}]}>
+                    <Text style={[styles.segmentText, {color: on ? t.text : t.textSub}]}>{POWER_PROFILES[m].label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={[styles.profileSub, {color: t.textMuted, paddingHorizontal: 8, paddingTop: 8}]}>
+              {POWER_PROFILES[mesh.powerMode].description}
+            </Text>
+          </View>
         </Section>
 
         <Section title="Mesh">
