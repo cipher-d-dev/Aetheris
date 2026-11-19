@@ -10,6 +10,7 @@
  */
 import {create} from 'zustand';
 import {AppState, EmitterSubscription} from 'react-native';
+import {useDraftsStore} from './draftsStore';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {MeshConfig, MeshNode} from '../mesh/meshNode';
 import {createRnCrypto} from '../mesh/rnCrypto';
@@ -497,6 +498,7 @@ export const useMeshService = create<MeshState>((set, get) => {
       }
       set({carrying: node?.carryCount() ?? 0, carryingForOthers: node?.carryForOthersCount() ?? 0});
       useMessagesStore.getState().dropConversation(conversationId);
+      useDraftsStore.getState().clearDraft(conversationId);
     },
 
     retryMessage: async (messageId: string) => {

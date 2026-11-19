@@ -4,6 +4,7 @@ import {NavigationContainer, DefaultTheme, DarkTheme} from '@react-navigation/na
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
+import {useDraftsStore} from './src/store/draftsStore';
 import {dbGetGroup, dbGetPeer, dbGetSetting, initDatabase} from './src/db/database';
 import {ThemeMode, useThemeStore} from './src/theme';
 import {useIdentityStore} from './src/store/identityStore';
@@ -31,6 +32,7 @@ export default function App() {
         useMeshService.setState({alias});
         await initializeIdentity();
         useMessagesStore.getState().loadConversations();
+        useDraftsStore.getState().loadDrafts();
         setPhase(alias ? 'ready' : 'onboarding');
       } catch (e) {
         console.error('[App] setup failed', e);

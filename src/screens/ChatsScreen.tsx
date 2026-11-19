@@ -6,6 +6,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
 import {Conversation, useMessagesStore} from '../store/messagesStore';
 import {useMeshService} from '../store/meshService';
+import {useDraftsStore} from '../store/draftsStore';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
@@ -23,6 +24,7 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
 }) {
   const {theme: t} = useThemeStore();
   const unread = item.unread > 0;
+  const draft = useDraftsStore(s => s.drafts[item.id]);
   return (
     <Pressable
       onPress={onPress}
@@ -65,7 +67,14 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
           <Text
             style={[styles.preview, {color: unread ? t.text : t.textSub}, unread && {fontFamily: Font.medium}]}
             numberOfLines={1}>
-            {item.lastMessage || ' '}
+            {draft?.trim() ? (
+              <>
+                <Text style={{color: t.primary}}>Draft: </Text>
+                {draft.trim()}
+              </>
+            ) : (
+              item.lastMessage || ' '
+            )}
           </Text>
           {unread && (
             <View style={[styles.badge, {backgroundColor: t.primary}]}>

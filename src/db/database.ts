@@ -69,6 +69,14 @@ export function dbSetSetting(key: string, value: string): void {
   );
 }
 
+export function dbListSettings(prefix: string): {key: string; value: string}[] {
+  return rows("SELECT key, value FROM settings WHERE substr(key, 1, ?) = ?", [prefix.length, prefix]);
+}
+
+export function dbDeleteSetting(key: string): void {
+  run('DELETE FROM settings WHERE key = ?', [key]);
+}
+
 // ─── Messages ────────────────────────────────────────────────────────────────
 
 export interface MessageRow {

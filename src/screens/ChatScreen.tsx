@@ -31,6 +31,7 @@ import {MAX_MEDIA_BASE64, useMeshService} from '../store/meshService';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
 import {dbFirstUnread, dbGetGroup, dbGroupDeliveries} from '../db/database';
+import {useDraftsStore} from '../store/draftsStore';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
@@ -225,7 +226,11 @@ export default function ChatScreen() {
   const {loadMessages, setActiveConversation} = useMessagesStore.getState();
   const {sendToConversation, routes, status, deleteMessage, retryMessage} = useMeshService();
 
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => useDraftsStore.getState().drafts[conversationId] ?? '');
+  const changeInput = (text: string) => {
+    setInput(text);
+    useDraftsStore.getState().setDraft(conversationId, text);
+  };
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -333,6 +338,7 @@ export default function ChatScreen() {
   }, [messages]);
 
   useEffect(() => () => clearTimeout(highlightTimer.current), []);
+  useEffect(() => () => useDraftsStore.getState().flushDrafts(), []);
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const {contentOffset, layoutMeasurement, contentSize} = e.nativeEvent;
@@ -423,20 +429,32 @@ export default function ChatScreen() {
     setError('');
     if (status !== 'running') {
       setError("Can't send yet — Aetheris is still starting. Check Bluetooth is on.");
-      return;
+      return false;
     }
     try {
       await sendToConversation(conversationId, content);
+      return true;
     } catch (e: any) {
       setError(e?.message ?? 'Could not send');
+      return false;
     }
+  };
+
+  // The draft stays stored while a send is in flight: drop it once the send
+  // worked, or put the text back if it failed. Skipped if the user has typed
+  // something new meanwhile.
+  const settleDraft = (ok: boolean, sent: string) => {
+    const {drafts, clearDraft} = useDraftsStore.getState();
+    if ((drafts[conversationId] ?? '') !== sent) return;
+    if (ok) clearDraft(conversationId);
+    else setInput(cur => cur || sent);
   };
 
   const sendText = () => {
     const text = input.trim();
     if (!text) return;
     setInput('');
-    send({kind: 'text', text});
+    send({kind: 'text', text}).then(ok => settleDraft(ok, text));
   };
 
   const attachPhoto = async () => {
@@ -450,11 +468,12 @@ export default function ChatScreen() {
       }
       const caption = input.trim();
       setInput('');
-      await send({
+      const ok = await send({
         kind: 'image',
         text: caption || undefined,
         media: {mime: img.mime, data: img.data, width: img.width, height: img.height},
       });
+      settleDraft(ok, caption);
     } catch (e: any) {
       setError(e?.message ?? 'Could not attach photo');
     } finally {
@@ -711,7 +730,7 @@ export default function ChatScreen() {
                 placeholder="Message"
                 placeholderTextColor={t.textMuted}
                 value={input}
-                onChangeText={setInput}
+                onChangeText={changeInput}
                 multiline
                 maxLength={4000}
               />
