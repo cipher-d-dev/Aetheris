@@ -1,6 +1,7 @@
 import React, {useEffect, useMemo, useRef} from 'react';
 import {View, Text, StyleSheet, SectionList, Pressable, Animated, Easing, AccessibilityRole, AccessibilityState} from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
 import {useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
@@ -123,6 +124,7 @@ export function Searching({title, subtitle}: {title: string; subtitle: string}) 
 
 export default function PeopleScreen() {
   const {theme: t} = useThemeStore();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const asPicker = useRoute<any>().name === 'NewMessage';
   const people = usePeople();
@@ -139,7 +141,7 @@ export default function PeopleScreen() {
 
   return (
     <View style={[styles.container, {backgroundColor: t.bg}]}>
-      <View style={[styles.header, asPicker && styles.headerModal]}>
+      <View style={[styles.header, asPicker && styles.headerModal, {paddingTop: insets.top + (asPicker ? 44 : 56)}]}>
         {asPicker && <IconButton accessibilityLabel="Close" name="close" onPress={() => navigation.goBack()} />}
         <Text style={[asPicker ? Type.title : Type.largeTitle, {color: t.text, flex: 1}]}>
           {asPicker ? 'New message' : 'People'}
@@ -186,8 +188,8 @@ export default function PeopleScreen() {
 
 const styles = StyleSheet.create({
   container: {flex: 1},
-  header: {flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 20, paddingTop: 56, paddingBottom: 10},
-  headerModal: {paddingHorizontal: 8, paddingTop: 44},
+  header: {flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 20, paddingBottom: 10},
+  headerModal: {paddingHorizontal: 8},
   row: {flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 10},
   action: {width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center'},
   name: {fontFamily: Font.semiBold, fontSize: 16.5},

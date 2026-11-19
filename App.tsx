@@ -1,6 +1,7 @@
 import React, {useEffect, useState} from 'react';
 import {Appearance, AppState, Linking, StatusBar, View} from 'react-native';
 import {NavigationContainer, DefaultTheme, DarkTheme} from '@react-navigation/native';
+import {SafeAreaProvider} from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import {dbGetGroup, dbGetPeer, dbGetSetting, initDatabase} from './src/db/database';
@@ -78,7 +79,7 @@ export default function App() {
   };
 
   return (
-    <>
+    <SafeAreaProvider>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={t.bg} />
       {phase === 'loading' ? (
         <View style={{flex: 1, backgroundColor: t.bg}} />
@@ -89,6 +90,6 @@ export default function App() {
           <AppNavigator />
         </NavigationContainer>
       )}
-    </>
+    </SafeAreaProvider>
   );
 }

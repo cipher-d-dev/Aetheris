@@ -2,6 +2,7 @@ import React from 'react';
 import {StyleSheet, Text} from 'react-native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, useThemeStore} from '../theme';
 import {useMessagesStore} from '../store/messagesStore';
 import {Icon} from '../ui/Icon';
@@ -24,12 +25,17 @@ const TAB_ICONS: Record<string, string> = {
 
 function Tabs() {
   const {theme: t} = useThemeStore();
+  const insets = useSafeAreaInsets();
   const unread = useMessagesStore(s => s.conversations.reduce((n, c) => n + c.unread, 0));
   return (
     <Tab.Navigator
       screenOptions={({route}) => ({
         headerShown: false,
-        tabBarStyle: [styles.tabBar, {backgroundColor: t.bg, borderTopColor: t.separator}],
+        // Height and bottom padding are set here (they override the tab bar's own inset padding), so the bottom inset is applied once.
+        tabBarStyle: [
+          styles.tabBar,
+          {height: 70 + insets.bottom, paddingBottom: 10 + insets.bottom, backgroundColor: t.bg, borderTopColor: t.separator},
+        ],
         tabBarActiveTintColor: t.primary,
         tabBarInactiveTintColor: t.textMuted,
         tabBarLabelPosition: 'below-icon',
@@ -67,6 +73,6 @@ export default function AppNavigator() {
 }
 
 const styles = StyleSheet.create({
-  tabBar: {height: 70, paddingTop: 8, paddingBottom: 10, borderTopWidth: StyleSheet.hairlineWidth, elevation: 0},
+  tabBar: {paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, elevation: 0},
   label: {fontFamily: Font.semiBold, fontSize: 11.5, lineHeight: 16, marginTop: 2},
 });

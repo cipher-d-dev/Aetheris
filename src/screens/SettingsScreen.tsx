@@ -1,6 +1,7 @@
 import React, {useState} from 'react';
 import {View, Text, StyleSheet, ScrollView, Switch, Pressable, Modal, TextInput, Alert, Share} from 'react-native';
 import {Font, ThemeMode, Type, useThemeStore} from '../theme';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
 import {dbSetSetting} from '../db/database';
@@ -18,6 +19,7 @@ const MODES: {mode: ThemeMode; label: string}[] = [
 
 export default function SettingsScreen() {
   const {theme: t, mode, setMode} = useThemeStore();
+  const insets = useSafeAreaInsets();
   const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? 'me');
   const mesh = useMeshService();
   const [editing, setEditing] = useState(false);
@@ -60,8 +62,8 @@ export default function SettingsScreen() {
 
   return (
     <View style={{flex: 1, backgroundColor: t.bg}}>
-      <ScrollView contentContainerStyle={{paddingBottom: 40}}>
-        <Text style={[Type.largeTitle, styles.title, {color: t.text}]}>Settings</Text>
+      <ScrollView contentContainerStyle={{paddingBottom: 40 + insets.bottom}}>
+        <Text style={[Type.largeTitle, styles.title, {paddingTop: insets.top + 56, color: t.text}]}>Settings</Text>
 
         <Pressable
           onPress={() => {
@@ -153,7 +155,7 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: {paddingHorizontal: 20, paddingTop: 56, paddingBottom: 12},
+  title: {paddingHorizontal: 20, paddingBottom: 12},
   profile: {flexDirection: 'row', alignItems: 'center', gap: 14, marginHorizontal: 16, padding: 16, borderRadius: 20},
   profileName: {fontFamily: Font.bold, fontSize: 19},
   profileSub: {fontFamily: Font.regular, fontSize: 13, marginTop: 3},

@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, useThemeStore} from '../theme';
 import {
   ChatMessage,
@@ -184,6 +185,7 @@ function Bubble({
 
 export default function ChatScreen() {
   const {theme: t} = useThemeStore();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const conversationId: string = useRoute<any>().params?.conversationId ?? '';
   const isGroup = isGroupConversation(conversationId);
@@ -433,7 +435,7 @@ export default function ChatScreen() {
   return (
     <KeyboardAvoidingView style={{flex: 1, backgroundColor: t.chatBg}} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Header */}
-      <View style={[styles.header, {backgroundColor: t.bg, borderBottomColor: t.separator}]}>
+      <View style={[styles.header, {paddingTop: insets.top + 40, backgroundColor: t.bg, borderBottomColor: t.separator}]}>
         <IconButton accessibilityLabel="Back" name="chevron-back" size={26} onPress={() => navigation.goBack()} />
         <Pressable
           style={styles.headerWho}
@@ -566,7 +568,7 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: {flexDirection: 'row', alignItems: 'center', paddingTop: 40, paddingBottom: 8, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth},
+  header: {flexDirection: 'row', alignItems: 'center', paddingBottom: 8, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth},
   headerWho: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 11},
   headerName: {fontFamily: Font.semiBold, fontSize: 16.5},
   headerSub: {fontFamily: Font.medium, fontSize: 12.5, marginTop: 1},

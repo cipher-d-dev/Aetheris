@@ -1,6 +1,7 @@
 import React, {useState} from 'react';
 import {View, Text, StyleSheet, ScrollView, Alert, TextInput, Modal, Pressable} from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
 import {
   conversationTitle,
@@ -20,6 +21,7 @@ import {isNearby, presenceText} from '../ui/presence';
 
 export default function ContactInfoScreen() {
   const {theme: t} = useThemeStore();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const conversationId: string = useRoute<any>().params?.conversationId ?? '';
   const isGroup = isGroupConversation(conversationId);
@@ -55,10 +57,10 @@ export default function ContactInfoScreen() {
 
   return (
     <View style={{flex: 1, backgroundColor: t.bg}}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 40}]}>
         <IconButton accessibilityLabel="Back" name="chevron-back" size={26} onPress={() => navigation.goBack()} />
       </View>
-      <ScrollView contentContainerStyle={{paddingBottom: 40}}>
+      <ScrollView contentContainerStyle={{paddingBottom: 40 + insets.bottom}}>
         <View style={styles.hero}>
           <Avatar
             id={conversationId}
@@ -134,7 +136,7 @@ export default function ContactInfoScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: {paddingTop: 40, paddingHorizontal: 4},
+  header: {paddingHorizontal: 4},
   hero: {alignItems: 'center', paddingTop: 4, paddingBottom: 4},
   name: {marginTop: 14, textAlign: 'center', paddingHorizontal: 20},
   sub: {fontFamily: Font.medium, fontSize: 14, marginTop: 4},
