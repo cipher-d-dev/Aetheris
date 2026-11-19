@@ -37,6 +37,7 @@ import {statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
+import {routeText} from '../ui/route';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -372,8 +373,8 @@ export default function ChatScreen() {
   };
 
   const info = (m: ChatMessage) => {
-    const via = m.route?.length ?? 0;
-    const viaText = via > 0 ? `\n\nIt reached them through ${via} other phone${via === 1 ? '' : 's'} nearby.` : '';
+    const routeLine = routeText(m.route, m.isOutbound, selfId, id => displayName(id));
+    const viaText = routeLine ? `\n\n${routeLine}` : '';
     let text: string;
     if (!m.isOutbound) text = `Received at ${formatClock(m.createdAt)}.${viaText}`;
     else if (m.status === 'delivered')
@@ -466,8 +467,8 @@ export default function ChatScreen() {
           <View style={[styles.notice, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
             <Icon name="lock-closed" size={13} color={t.textMuted} />
             <Text style={[styles.noticeText, {color: t.textSub}]}>
-              Messages are end-to-end encrypted and sent directly between nearby phones. No internet
-              involved.
+              Messages are end-to-end encrypted. They may hop through other Aetheris phones on the
+              way, and those phones can't read them. No internet involved.
             </Text>
           </View>
         }
