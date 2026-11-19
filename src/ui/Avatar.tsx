@@ -3,7 +3,7 @@ import {View, Text, StyleSheet} from 'react-native';
 import {Font, useThemeStore} from '../theme';
 import {Icon} from './Icon';
 
-const COLORS = ['#F2555A', '#F5A524', '#17C964', '#0EA5E9', '#7C5CFC', '#EC4899', '#14B8A6', '#6366F1', '#F97316'];
+export const COLORS = ['#F2555A', '#F5A524', '#17C964', '#0EA5E9', '#7C5CFC', '#EC4899', '#14B8A6', '#6366F1', '#F97316'];
 
 function hash(s: string): number {
   let h = 0;
@@ -13,6 +13,24 @@ function hash(s: string): number {
 
 export function avatarColor(id: string): string {
   return COLORS[hash(id) % COLORS.length];
+}
+
+// Text-safe shades of COLORS (same order): light >= 4.5:1 on white, dark >= 4.5:1 on #1C1D24.
+export const SENDER_TEXT_COLORS: {light: string; dark: string}[] = [
+  {light: '#D6393F', dark: '#FF8A8E'},
+  {light: '#B45309', dark: '#FBBF24'},
+  {light: '#15803D', dark: '#4ADE80'},
+  {light: '#0369A1', dark: '#38BDF8'},
+  {light: '#6D4AE8', dark: '#A78BFA'},
+  {light: '#BE185D', dark: '#F472B6'},
+  {light: '#0F766E', dark: '#2DD4BF'},
+  {light: '#4F46E5', dark: '#A5B4FC'},
+  {light: '#C2410C', dark: '#FB923C'},
+];
+
+export function senderTextColor(id: string, isDark: boolean): string {
+  const c = SENDER_TEXT_COLORS[hash(id) % SENDER_TEXT_COLORS.length];
+  return isDark ? c.dark : c.light;
 }
 
 export function initials(name: string): string {

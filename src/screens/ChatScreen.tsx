@@ -31,7 +31,7 @@ import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
 import {dbGetGroup} from '../db/database';
 import {useIdentityStore} from '../store/identityStore';
-import Avatar, {avatarColor} from '../ui/Avatar';
+import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
 import IconButton from '../ui/IconButton';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
@@ -131,7 +131,7 @@ function Bubble({
           !t.isDark && !out && styles.inShadow,
         ]}>
         {showSender && !out && (
-          <Text style={[styles.sender, {color: avatarColor(m.senderId)}]}>
+          <Text style={[styles.sender, {color: senderTextColor(m.senderId, t.isDark)}]}>
             {displayName(m.senderId, m.senderAlias)}
           </Text>
         )}
