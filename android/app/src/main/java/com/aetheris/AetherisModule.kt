@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -265,7 +266,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
     // ─── Notifications ─────────────────────────────────────────────────────
 
     @ReactMethod
-    fun showMessageNotification(title: String, body: String, promise: Promise) {
+    fun showMessageNotification(conversationId: String, title: String, body: String, promise: Promise) {
         try {
             val manager = NotificationManagerCompat.from(reactContext)
             if (!manager.areNotificationsEnabled()) {
@@ -278,9 +279,16 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
                     NotificationChannel(MESSAGE_CHANNEL_ID, "Messages", NotificationManager.IMPORTANCE_HIGH)
                 )
             }
-            val launch = reactContext.packageManager.getLaunchIntentForPackage(reactContext.packageName)
+            // One notification per conversation; tapping it opens that chat.
+            val notificationId = conversationId.hashCode()
+            val open = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("aetheris://chat/" + Uri.encode(conversationId)),
+                reactContext,
+                MainActivity::class.java
+            ).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             val pending = PendingIntent.getActivity(
-                reactContext, 0, launch,
+                reactContext, notificationId, open,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val notification = NotificationCompat.Builder(reactContext, MESSAGE_CHANNEL_ID)
@@ -291,7 +299,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
                 .setContentIntent(pending)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .build()
-            manager.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
+            manager.notify(notificationId, notification)
             promise.resolve(true)
         } catch (e: SecurityException) {
             promise.resolve(false)

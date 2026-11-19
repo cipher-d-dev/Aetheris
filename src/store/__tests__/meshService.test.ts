@@ -119,7 +119,7 @@ describe('meshService with a peer phone', () => {
     expect(conv.at(-1)).toMatchObject({text: 'hi from bob', isOutbound: false, senderAlias: 'Bob'});
     const list = useMessagesStore.getState().conversations;
     expect(list[0]).toMatchObject({id: bob.id, title: 'Bob', unread: 1});
-    expect(bridge.showMessageNotification).toHaveBeenCalledWith('Bob', 'hi from bob');
+    expect(bridge.showMessageNotification).toHaveBeenCalledWith(bob.id, 'Bob', 'hi from bob');
   });
 
   it('fans group messages out per member and counts delivery receipts', async () => {

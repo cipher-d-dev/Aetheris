@@ -72,8 +72,8 @@ export const AetherisBridge = {
   stopAudio: (): Promise<void> => AetherisNativeModule.stopAudio(),
 
   // ─── Notifications ──────────────────────────────────────────────────────
-  showMessageNotification: (title: string, body: string): Promise<boolean> =>
-    AetherisNativeModule.showMessageNotification(title, body),
+  showMessageNotification: (conversationId: string, title: string, body: string): Promise<boolean> =>
+    AetherisNativeModule.showMessageNotification(conversationId, title, body),
 
   // ─── Events ─────────────────────────────────────────────────────────────
   onPeerFound: (cb: (e: PeerFoundEvent) => void): EmitterSubscription =>
