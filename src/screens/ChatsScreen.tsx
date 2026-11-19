@@ -147,7 +147,7 @@ export default function ChatsScreen() {
     <View style={[styles.container, {backgroundColor: t.bg}]}>
       <View style={styles.header}>
         <Text style={[Type.largeTitle, {color: t.text}]}>Chats</Text>
-        <IconButton name="create-outline" onPress={() => navigation.navigate('NewMessage')} />
+        <IconButton accessibilityLabel="New message" name="create-outline" onPress={() => navigation.navigate('NewMessage')} />
       </View>
       <StatusLine />
 

@@ -124,7 +124,7 @@ export default function PeopleScreen() {
   return (
     <View style={[styles.container, {backgroundColor: t.bg}]}>
       <View style={[styles.header, asPicker && styles.headerModal]}>
-        {asPicker && <IconButton name="close" onPress={() => navigation.goBack()} />}
+        {asPicker && <IconButton accessibilityLabel="Close" name="close" onPress={() => navigation.goBack()} />}
         <Text style={[asPicker ? Type.title : Type.largeTitle, {color: t.text, flex: 1}]}>
           {asPicker ? 'New message' : 'People'}
         </Text>

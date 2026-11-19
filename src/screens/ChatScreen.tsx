@@ -416,7 +416,7 @@ export default function ChatScreen() {
     <KeyboardAvoidingView style={{flex: 1, backgroundColor: t.chatBg}} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Header */}
       <View style={[styles.header, {backgroundColor: t.bg, borderBottomColor: t.separator}]}>
-        <IconButton name="chevron-back" size={26} onPress={() => navigation.goBack()} />
+        <IconButton accessibilityLabel="Back" name="chevron-back" size={26} onPress={() => navigation.goBack()} />
         <Pressable
           style={styles.headerWho}
           onPress={() => navigation.navigate('ContactInfo', {conversationId})}>
@@ -503,13 +503,13 @@ export default function ChatScreen() {
       <View style={[styles.composer, {backgroundColor: t.bg}]}>
         {recording ? (
           <>
-            <IconButton name="trash-outline" color={t.danger} onPress={cancelRecording} />
+            <IconButton accessibilityLabel="Discard recording" name="trash-outline" color={t.danger} onPress={cancelRecording} />
             <View style={[styles.recording, {backgroundColor: t.surface}]}>
               <View style={[styles.recDot, {backgroundColor: t.danger}]} />
               <Text style={[styles.recText, {color: t.text}]}>{duration(elapsed)}</Text>
               <Text style={[styles.recHint, {color: t.textMuted}]}>Recording…</Text>
             </View>
-            <IconButton name="send" size={20} filled onPress={finishRecording} style={styles.sendButton} />
+            <IconButton accessibilityLabel="Send voice message" name="send" size={20} filled onPress={finishRecording} style={styles.sendButton} />
           </>
         ) : (
           <>
@@ -526,13 +526,13 @@ export default function ChatScreen() {
               {busy ? (
                 <ActivityIndicator color={t.primary} style={{marginRight: 12}} />
               ) : (
-                <IconButton name="camera-outline" size={23} color={t.textSub} onPress={attachPhoto} style={styles.inlineIcon} />
+                <IconButton accessibilityLabel="Attach photo" name="camera-outline" size={23} color={t.textSub} onPress={attachPhoto} style={styles.inlineIcon} />
               )}
             </View>
             {input.trim() ? (
-              <IconButton name="send" size={20} filled onPress={sendText} style={styles.sendButton} />
+              <IconButton accessibilityLabel="Send message" name="send" size={20} filled onPress={sendText} style={styles.sendButton} />
             ) : (
-              <IconButton name="mic" size={22} filled onPress={startRecording} style={styles.sendButton} />
+              <IconButton accessibilityLabel="Record voice message" name="mic" size={22} filled onPress={startRecording} style={styles.sendButton} />
             )}
           </>
         )}
