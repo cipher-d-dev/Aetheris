@@ -21,8 +21,10 @@ export interface DeliveryExplanationOpts {
   name: string;
   now: number;
   isGroup?: boolean;
-  /** Group only: members who haven't received the message yet */
+  /** Group only: members whose copy is still being tried */
   waitingNames?: string[];
+  /** Group only: members whose copy expired undelivered */
+  missedNames?: string[];
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -45,12 +47,13 @@ function nameList(names: string[]): string {
  */
 export function deliveryExplanation(
   m: Pick<ChatMessage, 'status' | 'isOutbound' | 'createdAt' | 'deliveredCount' | 'recipientCount'>,
-  {name, now, isGroup, waitingNames = []}: DeliveryExplanationOpts,
+  {name, now, isGroup, waitingNames = [], missedNames = []}: DeliveryExplanationOpts,
 ): string | null {
   if (!m.isOutbound || m.status === 'delivered') return null;
   const hours = Math.round(MESSAGE_TTL_MS / 3600000);
   if (m.status === 'failed') {
-    return `Nobody reached ${isGroup ? nameList(waitingNames) || 'the group' : name} within ${hours} hours.`;
+    const who = isGroup ? nameList([...missedNames, ...waitingNames]) || 'the group' : name;
+    return `Nobody reached ${who} within ${hours} hours.`;
   }
   const deadline = m.createdAt + MESSAGE_TTL_MS;
   const retry =
@@ -59,8 +62,10 @@ export function deliveryExplanation(
       : 'Aetheris is still trying.';
   if (isGroup) {
     const head = `Delivered to ${m.deliveredCount ?? 0} of ${m.recipientCount ?? 0}.`;
+    const missed = missedNames.length ? ` Didn't reach ${nameList(missedNames)} within ${hours} hours.` : '';
+    if (!waitingNames.length && missedNames.length) return `${head}${missed}`;
     const waiting = waitingNames.length ? `Still waiting for ${nameList(waitingNames)}.` : 'Still waiting for the rest.';
-    return `${head} ${waiting} ${retry}`;
+    return `${head}${missed} ${waiting} ${retry}`;
   }
   return `Waiting until ${name}, or someone who can reach them, is nearby. ${retry}`;
 }

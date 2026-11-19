@@ -32,7 +32,18 @@ import {AetherisBridge} from '../../native/AetherisBridge';
 import {initDatabase, dbGetConversation, dbGetGroup} from '../../db/database';
 import {useMeshService} from '../meshService';
 import {displayName, useMessagesStore} from '../messagesStore';
-import {dbGetPeer, dbSetNickname, dbUpdateMessageStatus} from '../../db/database';
+import {
+  dbAddGroupDelivery,
+  dbExpireGroupCopy,
+  dbExpireOverdueOutbound,
+  dbGetMessageStatus,
+  dbGetPeer,
+  dbInsertMessage,
+  dbMarkGroupDelivered,
+  dbSetNickname,
+  dbUpdateMessageStatus,
+} from '../../db/database';
+import {MESSAGE_TTL_MS} from '../../crypto/messageBuilder';
 import {MeshNode} from '../../mesh/meshNode';
 import {createRnCrypto} from '../../mesh/rnCrypto';
 import {MemoryStore} from '../../mesh/testing/simNetwork';
@@ -184,5 +195,62 @@ describe('meshService with a peer phone', () => {
     handler(bridge.onLinkDown as any)({linkId: 'L1'});
     expect(useMeshService.getState().neighbours).toEqual([]);
     expect(useMeshService.getState().routes).toEqual([]);
+  });
+
+  describe('expiry bookkeeping', () => {
+    const outbound = (id: string, createdAt: number, status: 'pending' | 'sent' = 'pending') =>
+      dbInsertMessage({
+        id,
+        conversationId: 'x',
+        senderId: me.id,
+        recipientId: bob.id,
+        kind: 'text',
+        text: id,
+        status,
+        isOutbound: true,
+        createdAt,
+      });
+    const group = (parent: string, subs: string[]) => {
+      outbound(parent, Date.now(), 'sent');
+      subs.forEach((s, i) => dbAddGroupDelivery(s, parent, `m${i}`));
+    };
+
+    it('fails a group message when every copy expires undelivered', () => {
+      group('gp1', ['gp1a', 'gp1b']);
+      expect(dbExpireGroupCopy('gp1a')).toEqual({parent: 'gp1', failed: false});
+      expect(dbExpireGroupCopy('gp1b')).toEqual({parent: 'gp1', failed: true});
+    });
+
+    it('does not fail a group message that was delivered to someone', () => {
+      group('gp2', ['gp2a', 'gp2b']);
+      dbMarkGroupDelivered('gp2a');
+      expect(dbExpireGroupCopy('gp2b')).toEqual({parent: 'gp2', failed: false});
+      expect(dbGetMessageStatus('gp2')).toBe('sent');
+    });
+
+    it('sweeps old pending messages at startup and leaves recent ones', () => {
+      const now = Date.now();
+      const spy = jest.spyOn(Date, 'now').mockReturnValue(now);
+      outbound('old1', now - MESSAGE_TTL_MS - 1000);
+      outbound('new1', now - 1000);
+      dbExpireOverdueOutbound(Date.now());
+      spy.mockRestore();
+      expect(dbGetMessageStatus('old1')).toBe('failed');
+      expect(dbGetMessageStatus('new1')).toBe('pending');
+    });
+
+    it('sweeps group parents by the same rule', () => {
+      const old = Date.now() - MESSAGE_TTL_MS - 1000;
+      outbound('gp3', old, 'sent');
+      outbound('gp4', old, 'sent');
+      dbAddGroupDelivery('gp3a', 'gp3', 'm0');
+      dbAddGroupDelivery('gp3b', 'gp3', 'm1');
+      dbAddGroupDelivery('gp4a', 'gp4', 'm0');
+      dbAddGroupDelivery('gp4b', 'gp4', 'm1');
+      dbMarkGroupDelivered('gp4a');
+      dbExpireOverdueOutbound(Date.now());
+      expect(dbGetMessageStatus('gp3')).toBe('failed');
+      expect(dbGetMessageStatus('gp4')).toBe('sent');
+    });
   });
 });

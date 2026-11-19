@@ -20,6 +20,7 @@ import {
   dbGetMessageStatus,
   dbGetSetting,
   dbGroupParent,
+  dbExpireGroupCopy,
   dbInsertMessage,
   dbMarkGroupDelivered,
   dbMeshStore,
@@ -283,8 +284,9 @@ export const useMeshService = create<MeshState>((set, get) => {
   const onSent = (id: string) => setStatusFor(dbGroupParent(id) ?? id, 'sent');
 
   const onExpired = (id: string) => {
-    const parent = dbGroupParent(id);
+    const {parent, failed} = dbExpireGroupCopy(id);
     if (!parent) setStatusFor(id, 'failed');
+    else if (failed) setStatusFor(parent, 'failed');
   };
 
   return {
