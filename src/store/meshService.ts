@@ -501,12 +501,14 @@ export const useMeshService = create<MeshState>((set, get) => {
     retryMessage: async (messageId: string) => {
       const m = dbGetMessage(messageId);
       if (!m || !m.isOutbound) return;
-      get().deleteMessage(messageId);
+      // Queue the new copy first: if sending throws (mesh not running), the
+      // failed message stays so nothing is lost.
       await get().sendToConversation(m.conversationId, {
         kind: m.kind,
         text: m.text || undefined,
         media: m.media,
       });
+      get().deleteMessage(messageId);
     },
 
     createGroup: (name: string, memberIds: string[]) => {

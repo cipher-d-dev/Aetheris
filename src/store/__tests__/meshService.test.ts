@@ -191,6 +191,25 @@ describe('meshService with a peer phone', () => {
     expect(conv[0].status).not.toBe('failed'); // queued again (and sprayed to Bob)
   });
 
+  it('a retry that cannot send keeps the failed message', async () => {
+    const erin = await keypair();
+    const id = await useMeshService.getState().sendToConversation(erin.id, {kind: 'text', text: 'keep me'});
+    dbUpdateMessageStatus(id, 'failed');
+    const realSend = useMeshService.getState().sendToConversation;
+    useMeshService.setState({
+      sendToConversation: async () => {
+        throw new Error('Mesh is not running yet');
+      },
+    });
+    try {
+      await expect(useMeshService.getState().retryMessage(id)).rejects.toThrow('Mesh is not running yet');
+    } finally {
+      useMeshService.setState({sendToConversation: realSend});
+    }
+    const conv = dbGetConversation(erin.id);
+    expect(conv.map(m => [m.id, m.text, m.status])).toEqual([[id, 'keep me', 'failed']]);
+  });
+
   it('deleting a chat stops delivery of its pending messages', async () => {
     const erin = await keypair();
     const svc = useMeshService.getState();
