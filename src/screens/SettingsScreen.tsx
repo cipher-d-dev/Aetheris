@@ -109,6 +109,19 @@ export default function SettingsScreen() {
           />
         </Section>
 
+        <Section title="Mesh">
+          <ListRow
+            icon="git-network-outline"
+            iconColor="#7C3AED"
+            title={
+              mesh.carryingForOthers === 0
+                ? 'Not carrying anything for others right now'
+                : `Carrying ${mesh.carryingForOthers} ${mesh.carryingForOthers === 1 ? 'message' : 'messages'} for others`
+            }
+            subtitle="Your phone passes these on when it meets someone who can deliver them. They're encrypted, so you can't read them. Uses a little battery."
+          />
+        </Section>
+
         <Section title="Help">
           <ListRow icon="help-circle-outline" iconColor="#0EA5E9" title="Can't see someone?" onPress={tips} />
           <ListRow

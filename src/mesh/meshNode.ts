@@ -218,6 +218,15 @@ export class MeshNode {
     return this.carry.size;
   }
 
+  /** Messages we carry for other people: excludes our own and all ACKs. */
+  carryForOthersCount(): number {
+    let n = 0;
+    for (const r of this.carry.values()) {
+      if (!r.own && r.message.type !== 'ACK') n++;
+    }
+    return n;
+  }
+
   // ─── Link lifecycle (called by the transport adapter) ───────────────────────
 
   async onLinkUp(linkId: string): Promise<void> {

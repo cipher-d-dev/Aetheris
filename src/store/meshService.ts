@@ -133,6 +133,8 @@ interface MeshState {
   nearbyCount: number;
   /** Messages this phone is holding for others (or for later) */
   carrying: number;
+  /** Messages carried for other people (not our own, not ACKs) */
+  carryingForOthers: number;
   permission: RadioPermissionState | 'unknown';
   bluetoothOn: boolean;
 
@@ -170,7 +172,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         dbUpsertPeer(r.id, r.alias);
       } catch {}
     }
-    set({neighbours, routes, carrying: node.carryCount(), nearbyCount: nearbyEndpoints.size});
+    set({neighbours, routes, carrying: node.carryCount(), carryingForOthers: node.carryForOthersCount(), nearbyCount: nearbyEndpoints.size});
     applyDutyCycle(false);
   };
 
@@ -293,6 +295,7 @@ export const useMeshService = create<MeshState>((set, get) => {
     routes: [],
     nearbyCount: 0,
     carrying: 0,
+    carryingForOthers: 0,
     permission: 'unknown',
     bluetoothOn: true,
 
@@ -331,7 +334,10 @@ export const useMeshService = create<MeshState>((set, get) => {
             onExpired,
             onTopologyChanged: refreshTopology,
             onCarryChanged: count => {
-              if (get().carrying !== count) set({carrying: count});
+              const others = node?.carryForOthersCount() ?? 0;
+              if (get().carrying !== count || get().carryingForOthers !== others) {
+                set({carrying: count, carryingForOthers: others});
+              }
             },
             log: msg => {
               logEvent(msg);
@@ -364,7 +370,7 @@ export const useMeshService = create<MeshState>((set, get) => {
           AetherisBridge.onFrame(e => void node?.onFrame(e.linkId, e.data)),
           AetherisBridge.onTick(() => {
             if (!node) return;
-            node.tick().then(() => set({carrying: node?.carryCount() ?? 0}));
+            node.tick().then(() => set({carrying: node?.carryCount() ?? 0, carryingForOthers: node?.carryForOthersCount() ?? 0}));
           }),
           AetherisBridge.onRadioError(e => {
             logEvent(`radio error ${e.code}: ${e.message}`);
@@ -376,7 +382,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         await AetherisBridge.setTickInterval(profile.tickMs);
         lastLinked = -1;
         applyDutyCycle(true);
-        set({status: 'running', carrying: node.carryCount()});
+        set({status: 'running', carrying: node.carryCount(), carryingForOthers: node.carryForOthersCount()});
         logEvent(`mesh started as ${selfId.slice(0, 6)} (${powerMode})`);
       } catch (e: any) {
         logEvent(`start failed: ${e?.message ?? e}`);
@@ -466,7 +472,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         useMessagesStore.getState().refresh(conversationId);
         throw e;
       }
-      set({carrying: node.carryCount()});
+      set({carrying: node.carryCount(), carryingForOthers: node.carryForOthersCount()});
       return id;
     },
 
@@ -474,7 +480,7 @@ export const useMeshService = create<MeshState>((set, get) => {
       const conversationId = dbGetMessageConversation(messageId);
       const subs = dbDeleteMessage(messageId);
       for (const id of [messageId, ...subs]) node?.cancel(id);
-      set({carrying: node?.carryCount() ?? 0});
+      set({carrying: node?.carryCount() ?? 0, carryingForOthers: node?.carryForOthersCount() ?? 0});
       useMessagesStore.getState().refresh(conversationId ?? undefined);
     },
 
