@@ -115,6 +115,12 @@ export interface MessageContent {
   group?: GroupInfo;
   /** The message this one replies to. Travels inside the encrypted payload; old clients ignore it. */
   replyTo?: ReplyRef;
+  /**
+   * A reaction to an earlier message. messageId is the target's refId; emoji is
+   * '' to remove the sender's reaction. Such a message is never shown as a bubble;
+   * `text` only exists so old app versions show something readable.
+   */
+  reaction?: {messageId: string; emoji: string};
   /** ID shared by every per-member copy of one group message */
   groupMessageId?: string;
   /** ID of the message being acknowledged — used in ACK messages */

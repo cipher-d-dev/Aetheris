@@ -29,7 +29,7 @@ import initSqlJs from 'sql.js';
 import sodium from 'react-native-sodium';
 import {Buffer} from 'buffer';
 import {AetherisBridge} from '../../native/AetherisBridge';
-import {initDatabase, dbFindByRef, dbGetConversation, dbGetGroup, dbListConversations} from '../../db/database';
+import {initDatabase, dbFindByRef, dbReactionsFor, dbSetReaction, dbGroupDeliveries, dbGetConversation, dbGetGroup, dbListConversations} from '../../db/database';
 import {useMeshService} from '../meshService';
 import {displayName, useMessagesStore} from '../messagesStore';
 import {
@@ -248,6 +248,99 @@ describe('meshService with a peer phone', () => {
     const conv = dbGetConversation(erin.id);
     expect(conv).toHaveLength(1);
     expect(conv[0].replyTo).toEqual(replyTo);
+  });
+
+  describe('reactions', () => {
+    const rx = async (c: any) => {
+      await bobNode.send({recipientId: me.id, content: {kind: 'text', text: '', alias: 'Bob', ...c}});
+      await settle();
+    };
+    const unreadOf = (id: string) => useMessagesStore.getState().conversations.find(c => c.id === id)?.unread ?? 0;
+
+    it('stores a reaction without a message row, notification or unread', async () => {
+      await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'react to me', alias: 'Bob'}});
+      await settle();
+      const target = dbGetConversation(bob.id).at(-1)!;
+      const rows = dbGetConversation(bob.id).length;
+      const unread = unreadOf(bob.id);
+      bridge.showMessageNotification.mockClear();
+
+      await rx({reaction: {messageId: target.refId, emoji: '👍'}, text: 'Reacted 👍 to "react to me"'});
+      expect(dbGetConversation(bob.id)).toHaveLength(rows);
+      expect(unreadOf(bob.id)).toBe(unread);
+      expect(bridge.showMessageNotification).not.toHaveBeenCalled();
+      expect(dbReactionsFor(bob.id)[target.refId]).toEqual([{emoji: '👍', reactorId: bob.id}]);
+      expect(useMessagesStore.getState().reactions[bob.id][target.refId]).toHaveLength(1);
+
+      // Change, then remove.
+      await new Promise(r => setTimeout(r, 5));
+      await rx({reaction: {messageId: target.refId, emoji: '❤️'}});
+      expect(dbReactionsFor(bob.id)[target.refId]).toEqual([{emoji: '❤️', reactorId: bob.id}]);
+      await new Promise(r => setTimeout(r, 5));
+      await rx({reaction: {messageId: target.refId, emoji: ''}});
+      expect(dbReactionsFor(bob.id)[target.refId]).toBeUndefined();
+    });
+
+    it('ignores an older reaction that arrives after a newer one', () => {
+      dbSetReaction('c-order', 'm1', 'zed', '❤️', 2000);
+      dbSetReaction('c-order', 'm1', 'zed', '👍', 1000);
+      expect(dbReactionsFor('c-order').m1).toEqual([{emoji: '❤️', reactorId: 'zed'}]);
+      dbSetReaction('c-order', 'm1', 'zed', '', 3000);
+      dbSetReaction('c-order', 'm1', 'zed', '😂', 2500); // stale, after the removal
+      expect(dbReactionsFor('c-order').m1).toBeUndefined();
+    });
+
+    it('drops an invalid reaction instead of storing it as text', async () => {
+      const rows = dbGetConversation(bob.id).length;
+      const before = JSON.stringify(dbReactionsFor(bob.id));
+      await rx({reaction: {messageId: 'x', emoji: '💩'}, text: 'bad emoji'});
+      await rx({reaction: {messageId: '', emoji: '👍'}, text: 'bad id'});
+      await rx({reaction: {messageId: 'a'.repeat(129), emoji: '👍'}, text: 'long id'});
+      await rx({reaction: 'str', text: 'not an object'});
+      await rx({reaction: {messageId: 5, emoji: '👍'}, text: 'num id'});
+      expect(dbGetConversation(bob.id)).toHaveLength(rows);
+      expect(JSON.stringify(dbReactionsFor(bob.id))).toBe(before);
+    });
+
+    it('sends a 1:1 reaction with a readable fallback for old versions', async () => {
+      const id = await useMeshService.getState().sendToConversation(bob.id, {kind: 'text', text: 'my words'});
+      const rows = dbGetConversation(bob.id).length;
+      await useMeshService.getState().sendReaction(bob.id, id, '😮');
+      await settle();
+      expect(bobInbox.at(-1)!.c).toMatchObject({reaction: {messageId: id, emoji: '😮'}, text: 'Reacted 😮 to "my words"'});
+      expect(dbGetConversation(bob.id)).toHaveLength(rows);
+      expect(dbReactionsFor(bob.id)[id]).toEqual([{emoji: '😮', reactorId: me.id}]);
+      await useMeshService.getState().sendReaction(bob.id, id, '');
+      await settle();
+      expect(bobInbox.at(-1)!.c.text).toBe('Removed a reaction');
+      expect(dbReactionsFor(bob.id)[id]).toBeUndefined();
+    });
+
+    it('fans a group reaction out to every member with no delivery rows', async () => {
+      const carol = await keypair();
+      const conversationId = useMeshService.getState().createGroup('Rx', [bob.id, carol.id]);
+      const id = await useMeshService.getState().sendToConversation(conversationId, {kind: 'text', text: 'grp'});
+      await settle();
+      const carryBefore = useMeshService.getState().carrying;
+      const deliveries = dbGroupDeliveries(id).length;
+      await useMeshService.getState().sendReaction(conversationId, id, '🙏');
+      await settle();
+      expect(bobInbox.at(-1)!.c).toMatchObject({reaction: {messageId: id, emoji: '🙏'}, group: {name: 'Rx'}});
+      expect(useMeshService.getState().carrying).toBe(carryBefore + 1); // Carol's copy is carried
+      expect(dbGroupDeliveries(id)).toHaveLength(deliveries);
+      expect(dbGetConversation(conversationId)).toHaveLength(1);
+      expect(dbReactionsFor(conversationId)[id]).toEqual([{emoji: '🙏', reactorId: me.id}]);
+    });
+
+    it('stores a group reaction from a member and drops reactions with the chat', async () => {
+      const gid = 'g-rx';
+      const conversationId = `group:${gid}`;
+      await rx({reaction: {messageId: 'shared-9', emoji: '😢'}, group: {id: gid, name: 'G', members: [bob.id, me.id]}});
+      expect(dbReactionsFor(conversationId)['shared-9']).toEqual([{emoji: '😢', reactorId: bob.id}]);
+      useMeshService.getState().deleteConversation(conversationId);
+      expect(dbReactionsFor(conversationId)).toEqual({});
+      expect(useMessagesStore.getState().reactions[conversationId]).toBeUndefined();
+    });
   });
 
   it('learns a group from the first message a member sends', async () => {

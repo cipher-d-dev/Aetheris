@@ -33,6 +33,8 @@ import {
   dbDeleteMessage,
   dbDeleteConversation,
   dbGetMessage,
+  dbFindByRef,
+  dbSetReaction,
 } from '../db/database';
 import {
   displayName,
@@ -42,6 +44,8 @@ import {
   useMessagesStore,
 } from './messagesStore';
 import {ContentKind, GroupInfo, MediaAttachment, MessageContent, MeshMessage, ReplyRef} from '../types/message';
+import {REACTIONS} from '../ui/reactions';
+import {replySnippet} from '../ui/reply';
 import {uuid} from '../utils/uuid';
 import {logEvent} from '../utils/logBuffer';
 import {
@@ -125,6 +129,15 @@ function parseReplyTo(r: unknown): ReplyRef | undefined {
   return {id, senderId, snippet: snippet.slice(0, 100)};
 }
 
+/** Strict check of a reaction from another phone: a known emoji, or '' to remove. */
+function parseReaction(r: unknown): {messageId: string; emoji: string} | undefined {
+  if (!r || typeof r !== 'object') return undefined;
+  const {messageId, emoji} = r as Record<string, unknown>;
+  if (typeof messageId !== 'string' || messageId.length === 0 || messageId.length > 128) return undefined;
+  if (typeof emoji !== 'string' || (emoji !== '' && !(REACTIONS as readonly string[]).includes(emoji))) return undefined;
+  return {messageId, emoji};
+}
+
 export interface OutgoingContent {
   kind: ContentKind;
   text?: string;
@@ -158,6 +171,8 @@ interface MeshState {
   setAlias: (alias: string) => void;
   setPowerMode: (mode: PowerMode) => void;
   sendToConversation: (conversationId: string, content: OutgoingContent) => Promise<string>;
+  /** React to a message (by its refId) with one of REACTIONS, or '' to remove ours. */
+  sendReaction: (conversationId: string, messageRef: string, emoji: string) => Promise<void>;
   createGroup: (name: string, memberIds: string[]) => string;
   /** Delete on this phone; also stops delivery if it hasn't arrived yet. */
   deleteMessage: (messageId: string) => void;
@@ -226,6 +241,15 @@ export const useMeshService = create<MeshState>((set, get) => {
       };
       dbUpsertGroup(group);
       conversationId = GROUP_PREFIX + group.id;
+    }
+
+    if (content.reaction !== undefined) {
+      // A reaction is not a message: no row, unread count, notification or preview.
+      const reaction = parseReaction(content.reaction);
+      if (!reaction) return;
+      dbSetReaction(conversationId, reaction.messageId, senderId, reaction.emoji, Math.min(m.routing.originTimestamp, Date.now()));
+      useMessagesStore.getState().loadReactions(conversationId);
+      return;
     }
 
     const kind: ContentKind =
@@ -303,6 +327,17 @@ export const useMeshService = create<MeshState>((set, get) => {
     const {parent, failed} = dbExpireGroupCopy(id);
     if (!parent) setStatusFor(id, 'failed');
     else if (failed) setStatusFor(parent, 'failed');
+  };
+
+  /** Who a send to this conversation goes to. Throws if it can't be sent. */
+  const resolveTargets = (conversationId: string, self: string) => {
+    const isGroup = isGroupConversation(conversationId);
+    const group = isGroup ? dbGetGroup(groupIdOf(conversationId)) : null;
+    if (isGroup && !group) throw new Error('Unknown group');
+    const recipients = group ? group.members.filter(mId => mId !== self) : [conversationId];
+    if (recipients.length === 0) throw new Error('Nobody to send to');
+    if (!group && conversationId === self) throw new Error("You can't message yourself");
+    return {group, recipients};
   };
 
   return {
@@ -451,12 +486,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         ...(alias ? {alias} : {}),
       };
 
-      const isGroup = isGroupConversation(conversationId);
-      const group = isGroup ? dbGetGroup(groupIdOf(conversationId)) : null;
-      if (isGroup && !group) throw new Error('Unknown group');
-      const recipients = group ? group.members.filter(mId => mId !== self) : [conversationId];
-      if (recipients.length === 0) throw new Error('Nobody to send to');
-      if (!group && conversationId === self) throw new Error("You can't message yourself");
+      const {group, recipients} = resolveTargets(conversationId, self);
 
       dbInsertMessage({
         id,
@@ -495,6 +525,32 @@ export const useMeshService = create<MeshState>((set, get) => {
       }
       set({carrying: node.carryCount(), carryingForOthers: node.carryForOthersCount()});
       return id;
+    },
+
+    sendReaction: async (conversationId, messageRef, emoji) => {
+      const self = get().selfId;
+      if (!node || !self) throw new Error('Mesh is not running yet');
+      if (emoji !== '' && !(REACTIONS as readonly string[]).includes(emoji)) throw new Error('Unknown reaction');
+      const {group, recipients} = resolveTargets(conversationId, self);
+      const target = dbFindByRef(conversationId, messageRef);
+      const snippet = target ? replySnippet(target).slice(0, 40) : '';
+      const alias = get().alias || undefined;
+      const base: MessageContent = {
+        kind: 'text',
+        reaction: {messageId: messageRef, emoji},
+        // For old app versions, which would otherwise show an empty bubble.
+        text: emoji ? `Reacted ${emoji} to "${snippet}"` : 'Removed a reaction',
+        ...(alias ? {alias} : {}),
+        ...(group ? {group} : {}),
+      };
+      // Group copies get their own ids but no group_deliveries rows and no messages
+      // row: nothing to tick, and the ACKs/expiry of these ids find nothing to update.
+      for (const member of recipients) {
+        await node.send({id: uuid(), recipientId: member, content: base});
+      }
+      dbSetReaction(conversationId, messageRef, self, emoji, Date.now());
+      useMessagesStore.getState().loadReactions(conversationId);
+      set({carrying: node.carryCount(), carryingForOthers: node.carryForOthersCount()});
     },
 
     deleteMessage: (messageId: string) => {

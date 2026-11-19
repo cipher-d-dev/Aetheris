@@ -237,7 +237,47 @@ export function dbDeleteConversation(conversationId: string): string[] {
     [conversationId],
   );
   run('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
+  run('DELETE FROM reactions WHERE conversation_id = ?', [conversationId]);
   return [...ids, ...subs];
+}
+
+export interface ReactionRow {
+  emoji: string;
+  reactorId: string;
+}
+
+/**
+ * Set (or, with emoji '', remove) one person's reaction to a message. Mesh messages
+ * can arrive out of order, so an older reaction never replaces a newer one. A removal
+ * is kept as an empty-emoji row so a stale reaction arriving later can't bring it back.
+ */
+export function dbSetReaction(
+  conversationId: string,
+  messageRef: string,
+  reactorId: string,
+  emoji: string,
+  createdAt: number,
+): void {
+  run(
+    `INSERT INTO reactions (message_ref, conversation_id, reactor_id, emoji, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(message_ref, reactor_id) DO UPDATE SET
+       conversation_id = excluded.conversation_id, emoji = excluded.emoji, created_at = excluded.created_at
+     WHERE excluded.created_at >= reactions.created_at`,
+    [messageRef, conversationId, reactorId, emoji, createdAt],
+  );
+}
+
+export function dbReactionsFor(conversationId: string): Record<string, ReactionRow[]> {
+  const out: Record<string, ReactionRow[]> = {};
+  for (const r of rows(
+    `SELECT message_ref, reactor_id, emoji FROM reactions
+      WHERE conversation_id = ? AND emoji != '' ORDER BY created_at`,
+    [conversationId],
+  )) {
+    (out[r.message_ref] ??= []).push({emoji: r.emoji, reactorId: r.reactor_id});
+  }
+  return out;
 }
 
 /** Our own messages that are still waiting for an ACK (for UI only). */

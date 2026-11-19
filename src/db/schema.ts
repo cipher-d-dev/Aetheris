@@ -51,6 +51,15 @@ export const CREATE_TABLES_SQL = `
     delivered INTEGER DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS reactions (
+    message_ref TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    reactor_id TEXT NOT NULL,
+    emoji TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (message_ref, reactor_id)
+  );
+
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -58,5 +67,6 @@ export const CREATE_TABLES_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_seen_messages_time ON seen_message_ids(seen_at);
+  CREATE INDEX IF NOT EXISTS idx_reactions_conversation ON reactions(conversation_id);
   CREATE INDEX IF NOT EXISTS idx_group_deliveries_msg ON group_deliveries(message_id);
 `;
