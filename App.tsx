@@ -1,14 +1,16 @@
 import React, {useEffect, useState} from 'react';
-import {Appearance, AppState, StatusBar, View} from 'react-native';
+import {Appearance, AppState, Linking, StatusBar, View} from 'react-native';
 import {NavigationContainer, DefaultTheme, DarkTheme} from '@react-navigation/native';
+import {SafeAreaProvider} from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
-import {dbGetSetting, initDatabase} from './src/db/database';
+import {dbGetGroup, dbGetPeer, dbGetSetting, initDatabase} from './src/db/database';
 import {ThemeMode, useThemeStore} from './src/theme';
 import {useIdentityStore} from './src/store/identityStore';
 import {useMeshService} from './src/store/meshService';
 import {useMessagesStore} from './src/store/messagesStore';
-import {navigationRef} from './src/navigation/navigationRef';
+import {navigationRef, openChat} from './src/navigation/navigationRef';
+import {chatIdFromUrl, isKnownConversation} from './src/navigation/deepLink';
 
 type Phase = 'loading' | 'onboarding' | 'ready';
 
@@ -48,6 +50,18 @@ export default function App() {
     if (phase === 'ready' && identity) useMeshService.getState().bootstrap(identity.publicKeyBase58);
   }, [phase, identity]);
 
+  // Notification taps arrive as aetheris://chat/<id> links.
+  useEffect(() => {
+    if (phase !== 'ready') return;
+    const open = (url: string | null) => {
+      const id = url ? chatIdFromUrl(url) : null;
+      if (id && isKnownConversation(id, {group: dbGetGroup, peer: dbGetPeer})) openChat(id);
+    };
+    Linking.getInitialURL().then(open, () => undefined);
+    const sub = Linking.addEventListener('url', e => open(e.url));
+    return () => sub.remove();
+  }, [phase]);
+
   // Back in the app: retry if Bluetooth or permissions were missing.
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
@@ -65,7 +79,7 @@ export default function App() {
   };
 
   return (
-    <>
+    <SafeAreaProvider>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={t.bg} />
       {phase === 'loading' ? (
         <View style={{flex: 1, backgroundColor: t.bg}} />
@@ -76,6 +90,6 @@ export default function App() {
           <AppNavigator />
         </NavigationContainer>
       )}
-    </>
+    </SafeAreaProvider>
   );
 }

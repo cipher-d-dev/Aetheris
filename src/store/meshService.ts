@@ -248,7 +248,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         ? `${who} · ${dbGetGroup(groupIdOf(conversationId))?.name ?? 'Group'}`
         : who;
       const body = kind === 'image' ? '📷 Photo' : kind === 'audio' ? '🎤 Voice message' : content.text ?? '';
-      AetherisBridge.showMessageNotification(title, body).catch(() => undefined);
+      AetherisBridge.showMessageNotification(conversationId, title, body).catch(() => undefined);
     }
   };
 

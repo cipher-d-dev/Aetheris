@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 import {View, Text, StyleSheet, FlatList, Pressable, TextInput, Alert} from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {openSettings} from 'react-native-permissions';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
 import {Conversation, useMessagesStore} from '../store/messagesStore';
 import {useMeshService} from '../store/meshService';
@@ -126,6 +127,7 @@ function StatusLine() {
 
 export default function ChatsScreen() {
   const {theme: t} = useThemeStore();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const conversations = useMessagesStore(s => s.conversations);
   const {loadConversations, deleteConversation} = useMessagesStore.getState();
@@ -147,7 +149,7 @@ export default function ChatsScreen() {
 
   return (
     <View style={[styles.container, {backgroundColor: t.bg}]}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 56}]}>
         <Text style={[Type.largeTitle, {color: t.text}]}>Chats</Text>
         <IconButton accessibilityLabel="New message" name="create-outline" onPress={() => navigation.navigate('NewMessage')} />
       </View>
@@ -216,7 +218,7 @@ export default function ChatsScreen() {
 
 const styles = StyleSheet.create({
   container: {flex: 1},
-  header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 56},
+  header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20},
   status: {flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 20, marginTop: 2, marginBottom: 14},
   statusDot: {width: 8, height: 8, borderRadius: 4},
   statusText: {fontFamily: Font.medium, fontSize: 13.5},

@@ -1,10 +1,12 @@
 import React, {useState} from 'react';
-import {View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform} from 'react-native';
+import {View, Text, TextInput, StyleSheet, KeyboardAvoidingView} from 'react-native';
 import {openSettings} from 'react-native-permissions';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
 import {useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
 import {requestRadioPermissions} from '../native/permissions';
+import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import Button from '../ui/Button';
 import Avatar from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
@@ -15,6 +17,8 @@ import {Icon} from '../ui/Icon';
  */
 export default function OnboardingScreen({onDone}: {onDone: () => void}) {
   const {theme: t} = useThemeStore();
+  const insets = useSafeAreaInsets();
+  const keyboardVisible = useKeyboardVisible();
   const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? 'me');
   const setAlias = useMeshService(s => s.setAlias);
   const bootstrap = useMeshService(s => s.bootstrap);
@@ -44,8 +48,8 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
   if (step === 'name') {
     return (
       <KeyboardAvoidingView
-        style={[styles.container, {backgroundColor: t.bg}]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        style={[styles.container, {paddingTop: insets.top + 72, paddingBottom: 32 + (keyboardVisible ? 0 : insets.bottom), backgroundColor: t.bg}]}
+        behavior={keyboardAvoidingBehavior()}>
         <View style={styles.top}>
           <Text style={[styles.brand, {color: t.primary}]}>Aetheris</Text>
           <Text style={[Type.largeTitle, {color: t.text}]}>What should people call you?</Text>
@@ -79,7 +83,7 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
   }
 
   return (
-    <View style={[styles.container, {backgroundColor: t.bg}]}>
+    <View style={[styles.container, {paddingTop: insets.top + 72, paddingBottom: 32 + insets.bottom, backgroundColor: t.bg}]}>
       <View style={styles.top}>
         <View style={[styles.hero, {backgroundColor: t.primarySoft}]}>
           <Icon name="people" size={56} color={t.primary} />
@@ -120,7 +124,7 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
 }
 
 const styles = StyleSheet.create({
-  container: {flex: 1, paddingHorizontal: 24, paddingTop: 72, paddingBottom: 32},
+  container: {flex: 1, paddingHorizontal: 24},
   top: {flex: 1},
   brand: {fontFamily: Font.bold, fontSize: 15, marginBottom: 14, letterSpacing: 0.2},
   lead: {fontFamily: Font.regular, fontSize: 16, lineHeight: 24, marginTop: 10},

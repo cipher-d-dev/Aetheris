@@ -1,6 +1,7 @@
 import React, {useState} from 'react';
 import {View, Text, TextInput, StyleSheet, FlatList} from 'react-native';
 import {useNavigation} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
 import {useMeshService} from '../store/meshService';
 import IconButton from '../ui/IconButton';
@@ -15,6 +16,7 @@ import {PersonRow, Searching, usePeople} from './PeopleScreen';
  */
 export default function NewGroupScreen() {
   const {theme: t} = useThemeStore();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const createGroup = useMeshService(s => s.createGroup);
   const people = usePeople();
@@ -26,7 +28,7 @@ export default function NewGroupScreen() {
 
   return (
     <View style={[styles.container, {backgroundColor: t.bg}]}>
-      <View style={styles.header}>
+      <View style={[styles.header, {paddingTop: insets.top + 44}]}>
         <IconButton accessibilityLabel="Back" name="chevron-back" onPress={() => navigation.goBack()} />
         <Text style={[Type.title, {color: t.text, flex: 1}]}>New group</Text>
       </View>
@@ -55,7 +57,7 @@ export default function NewGroupScreen() {
         <FlatList
           data={people}
           keyExtractor={p => p.id}
-          contentContainerStyle={{paddingBottom: 120}}
+          contentContainerStyle={{paddingBottom: 120 + insets.bottom}}
           renderItem={({item}) => {
             const on = selected.includes(item.id);
             return (
@@ -77,7 +79,7 @@ export default function NewGroupScreen() {
         />
       )}
 
-      <View style={[styles.footer, {backgroundColor: t.bg}]}>
+      <View style={[styles.footer, {paddingBottom: 24 + insets.bottom, backgroundColor: t.bg}]}>
         <Button
           title="Create group"
           disabled={!canCreate}
@@ -90,10 +92,10 @@ export default function NewGroupScreen() {
 
 const styles = StyleSheet.create({
   container: {flex: 1},
-  header: {flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingTop: 44, paddingBottom: 8},
+  header: {flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingBottom: 8},
   nameBox: {flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 16, padding: 10, borderRadius: 18},
   groupIcon: {width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center'},
   nameInput: {flex: 1, fontFamily: Font.semiBold, fontSize: 17, paddingVertical: 8},
   section: {fontFamily: Font.semiBold, fontSize: 13, paddingHorizontal: 20, paddingTop: 22, paddingBottom: 6},
-  footer: {position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16, paddingBottom: 24},
+  footer: {position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16},
 });
