@@ -42,6 +42,7 @@ import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import {buildItems, findArrivalsAbove} from '../ui/chatItems';
 import {isLate, lateAccessibilityLabel, lateLabel} from '../ui/late';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
+import {replySnippet, resolveQuote} from '../ui/reply';
 import {routeText} from '../ui/route';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -112,6 +113,8 @@ function Bubble({
   onLongPress,
   onStatus,
   highlight,
+  quote,
+  onQuote,
 }: {
   m: ChatMessage;
   first: boolean;
@@ -123,6 +126,8 @@ function Bubble({
   onLongPress: () => void;
   onStatus: () => void;
   highlight: boolean;
+  quote: ReturnType<typeof resolveQuote> | null;
+  onQuote: (targetId: string | null) => void;
 }) {
   const {theme: t} = useThemeStore();
   const out = m.isOutbound;
@@ -181,6 +186,27 @@ function Bubble({
           <Text style={[styles.sender, {color: senderTextColor(m.senderId, t.isDark)}]}>
             {displayName(m.senderId, m.senderAlias)}
           </Text>
+        )}
+        {quote && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Reply to ${quote.name}: ${quote.snippet}. Double tap to view.`}
+            onPress={() => onQuote(quote.targetId)}
+            style={[
+              styles.quote,
+              {backgroundColor: out ? 'rgba(255,255,255,0.16)' : t.surfaceAlt},
+              uri && styles.quoteOnImage,
+            ]}>
+            <View style={[styles.quoteStripe, {backgroundColor: out ? 'rgba(255,255,255,0.85)' : t.primary}]} />
+            <View style={styles.quoteBody}>
+              <Text numberOfLines={1} style={[styles.quoteName, {color: out ? t.bubbleOutText : t.primary}]}>
+                {quote.name}
+              </Text>
+              <Text numberOfLines={2} style={[styles.quoteText, {color: out ? t.bubbleOutText : t.textSub}]}>
+                {quote.snippet}
+              </Text>
+            </View>
+          </Pressable>
         )}
         {uri && <Image source={{uri}} style={[styles.image, radius, {aspectRatio: aspect}]} resizeMode="cover" />}
         {m.kind === 'audio' && (
@@ -243,6 +269,8 @@ export default function ChatScreen() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [menuFor, setMenuFor] = useState<ChatMessage | null>(null);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
   // Known before the first render (nothing is marked read yet), so a chat that
   // opens at the unread divider never starts heading for the bottom.
@@ -414,6 +442,11 @@ export default function ChatScreen() {
     }
   };
 
+  const onQuote = (targetId: string | null) => {
+    if (targetId) scrollToMessage(targetId, {highlight: true});
+    else setNotice("Original message isn't loaded");
+  };
+
   const jumpToAbove = () => {
     if (aboveId) scrollToMessage(aboveId, {highlight: true});
     setAboveId(null);
@@ -443,18 +476,24 @@ export default function ChatScreen() {
   // The draft stays stored while a send is in flight: drop it once the send
   // worked, or put the text back if it failed. Skipped if the user has typed
   // something new meanwhile.
-  const settleDraft = (ok: boolean, sent: string) => {
+  const settleDraft = (ok: boolean, sent: string, replied: ChatMessage | null = null) => {
+    if (!ok && replied) setReplyingTo(cur => cur ?? replied);
     const {drafts, clearDraft} = useDraftsStore.getState();
     if ((drafts[conversationId] ?? '') !== sent) return;
     if (ok) clearDraft(conversationId);
     else setInput(cur => cur || sent);
   };
 
+  const replyContent = (m: ChatMessage | null) =>
+    m ? {replyTo: {id: m.refId, senderId: m.senderId, snippet: replySnippet(m)}} : {};
+
   const sendText = () => {
     const text = input.trim();
     if (!text) return;
+    const replied = replyingTo;
     setInput('');
-    send({kind: 'text', text}).then(ok => settleDraft(ok, text));
+    setReplyingTo(null);
+    send({kind: 'text', text, ...replyContent(replied)}).then(ok => settleDraft(ok, text, replied));
   };
 
   const attachPhoto = async () => {
@@ -467,13 +506,16 @@ export default function ChatScreen() {
         return;
       }
       const caption = input.trim();
+      const replied = replyingTo;
       setInput('');
+      setReplyingTo(null);
       const ok = await send({
         kind: 'image',
         text: caption || undefined,
+        ...replyContent(replied),
         media: {mime: img.mime, data: img.data, width: img.width, height: img.height},
       });
-      settleDraft(ok, caption);
+      settleDraft(ok, caption, replied);
     } catch (e: any) {
       setError(e?.message ?? 'Could not attach photo');
     } finally {
@@ -499,7 +541,14 @@ export default function ChatScreen() {
     setRecordingSince(null);
     try {
       const audio = await AetherisBridge.stopRecording();
-      await send({kind: 'audio', media: {mime: audio.mime, data: audio.data, durationMs: audio.durationMs}});
+      const replied = replyingTo;
+      setReplyingTo(null);
+      const ok = await send({
+        kind: 'audio',
+        ...replyContent(replied),
+        media: {mime: audio.mime, data: audio.data, durationMs: audio.durationMs},
+      });
+      if (!ok) setReplyingTo(replied);
     } catch (e: any) {
       setError(e?.message ?? 'Recording failed');
     }
@@ -586,6 +635,16 @@ export default function ChatScreen() {
         icon: 'refresh-outline',
         onPress: () => retryMessage(m.id).catch(e => setError(String(e?.message ?? e))),
       });
+    if (!(m.isOutbound && m.status === 'failed'))
+      actions.push({
+        key: 'reply',
+        label: 'Reply',
+        icon: 'arrow-undo-outline',
+        onPress: () => {
+          setReplyingTo(m);
+          inputRef.current?.focus();
+        },
+      });
     if (m.text)
       actions.push({key: 'copy', label: 'Copy', icon: 'copy-outline', onPress: () => copyMessage(m.text)});
     actions.push({key: 'info', label: 'Info', icon: 'information-circle-outline', onPress: () => info(m)});
@@ -670,6 +729,8 @@ export default function ChatScreen() {
               onImage={setViewer}
               onLongPress={() => setMenuFor(item.m)}
               onStatus={() => statusInfo(item.m)}
+              quote={item.m.replyTo ? resolveQuote(item.m.replyTo, messages, selfId, displayName) : null}
+              onQuote={onQuote}
             />
           )
         }
@@ -711,6 +772,21 @@ export default function ChatScreen() {
       )}
 
       {/* Composer */}
+      {replyingTo && !recording && (
+        <View style={[styles.replyBar, {backgroundColor: t.surface}]}>
+          <View style={[styles.quoteStripe, {backgroundColor: t.primary}]} />
+          <View style={styles.quoteBody}>
+            <Text numberOfLines={1} style={[styles.quoteName, {color: t.primary}]}>
+              {replyingTo.isOutbound ? 'You' : displayName(replyingTo.senderId, replyingTo.senderAlias)}
+            </Text>
+            <Text numberOfLines={1} style={[styles.quoteText, {color: t.textSub}]}>
+              {replySnippet(replyingTo)}
+            </Text>
+          </View>
+          <IconButton accessibilityLabel="Cancel reply" name="close" size={20} color={t.textSub} onPress={() => setReplyingTo(null)} />
+        </View>
+      )}
+
       <View style={[styles.composer, {backgroundColor: t.bg, paddingBottom: 10 + (keyboardVisible ? 0 : insets.bottom)}]}>
         {recording ? (
           <>
@@ -726,6 +802,7 @@ export default function ChatScreen() {
           <>
             <View style={[styles.inputWrap, {backgroundColor: t.surface}]}>
               <TextInput
+                ref={inputRef}
                 style={[styles.input, {color: t.text}]}
                 placeholder="Message"
                 placeholderTextColor={t.textMuted}
@@ -799,6 +876,13 @@ const styles = StyleSheet.create({
   wave: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 28},
   waveBar: {flex: 1, borderRadius: 2},
   audioTime: {position: 'absolute', left: 48, bottom: -2, fontFamily: Font.medium, fontSize: 11},
+  quote: {flexDirection: 'row', borderRadius: 8, overflow: 'hidden', marginBottom: 5},
+  quoteOnImage: {margin: 6, marginTop: 6},
+  quoteStripe: {width: 3},
+  quoteBody: {flex: 1, paddingHorizontal: 8, paddingVertical: 4},
+  quoteName: {fontFamily: Font.semiBold, fontSize: 12.5},
+  quoteText: {fontFamily: Font.regular, fontSize: 13, lineHeight: 17},
+  replyBar: {flexDirection: 'row', alignItems: 'center', marginHorizontal: 10, marginTop: 6, borderRadius: 12, overflow: 'hidden', paddingRight: 4},
   away: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, borderRadius: 12},
   awayText: {flex: 1, fontFamily: Font.regular, fontSize: 12.5, lineHeight: 17},
   error: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, borderRadius: 12},
