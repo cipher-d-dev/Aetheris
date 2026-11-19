@@ -199,6 +199,57 @@ describe('meshService with a peer phone', () => {
     expect(dbFindByRef(`group:${gid}`, 'nope')).toBeNull();
   });
 
+  it('delivers a 1:1 reply with replyTo intact', async () => {
+    const replyTo = {id: 'orig-1', senderId: bob.id, snippet: 'hi from bob'};
+    const id = await useMeshService.getState().sendToConversation(bob.id, {kind: 'text', text: 're', replyTo});
+    await settle();
+    expect(bobInbox.at(-1)!.c.replyTo).toEqual(replyTo);
+    expect(dbGetConversation(bob.id).find(m => m.id === id)!.replyTo).toEqual(replyTo);
+    // Bob replies to us: the inbound row keeps it.
+    await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'ok', replyTo}});
+    await settle();
+    expect(dbGetConversation(bob.id).at(-1)!.replyTo).toEqual(replyTo);
+  });
+
+  it('drops or truncates a malformed replyTo but still stores the message', async () => {
+    const send = async (text: string, replyTo: unknown) => {
+      await bobNode.send({recipientId: me.id, content: {kind: 'text', text, replyTo} as any});
+      await settle();
+      return dbGetConversation(bob.id).at(-1)!;
+    };
+    expect(await send('bad1', 'str')).toMatchObject({text: 'bad1', replyTo: undefined});
+    expect(await send('bad2', {id: 5, senderId: 'x', snippet: 's'})).toMatchObject({text: 'bad2', replyTo: undefined});
+    expect(await send('bad3', {id: '', senderId: 'x', snippet: 's'})).toMatchObject({replyTo: undefined});
+    expect(await send('bad4', {id: 'a'.repeat(129), senderId: 'x', snippet: 's'})).toMatchObject({replyTo: undefined});
+    expect(await send('bad5', {id: 'a', senderId: 'x', snippet: 7})).toMatchObject({replyTo: undefined});
+    const big = await send('big', {id: 'a', senderId: 'x', snippet: 'z'.repeat(5000)});
+    expect(big.text).toBe('big');
+    expect(big.replyTo).toEqual({id: 'a', senderId: 'x', snippet: 'z'.repeat(100)});
+  });
+
+  it('carries replyTo on every group copy', async () => {
+    const carol = await keypair();
+    const conversationId = useMeshService.getState().createGroup('Replies', [bob.id, carol.id]);
+    const replyTo = {id: 'g-orig', senderId: carol.id, snippet: 'earlier'};
+    const id = await useMeshService.getState().sendToConversation(conversationId, {kind: 'text', text: 'gr', replyTo});
+    await settle();
+    expect(bobInbox.at(-1)!.c.replyTo).toEqual(replyTo);
+    expect(dbFindByRef(conversationId, id)!.replyTo).toEqual(replyTo);
+    // Carol is unreachable: her copy sits in the carry store with replyTo inside the content.
+    expect(dbGetConversation(conversationId).find(m => m.id === id)!.replyTo).toEqual(replyTo);
+  });
+
+  it('retry keeps replyTo', async () => {
+    const erin = await keypair();
+    const replyTo = {id: 'r-1', senderId: erin.id, snippet: 'Photo'};
+    const id = await useMeshService.getState().sendToConversation(erin.id, {kind: 'text', text: 'again', replyTo});
+    dbUpdateMessageStatus(id, 'failed');
+    await useMeshService.getState().retryMessage(id);
+    const conv = dbGetConversation(erin.id);
+    expect(conv).toHaveLength(1);
+    expect(conv[0].replyTo).toEqual(replyTo);
+  });
+
   it('learns a group from the first message a member sends', async () => {
     const gid = 'g-from-bob';
     await bobNode.send({

@@ -4,7 +4,7 @@
  */
 import {open, QuickSQLiteConnection} from 'react-native-quick-sqlite';
 import {CREATE_TABLES_SQL} from './schema';
-import {GroupInfo, MediaAttachment, MessageStatus, ContentKind} from '../types/message';
+import {GroupInfo, MediaAttachment, MessageStatus, ContentKind, ReplyRef} from '../types/message';
 import {MESSAGE_TTL_MS} from '../crypto/messageBuilder';
 import type {CarryRecord, MeshStore} from '../mesh/meshNode';
 
@@ -46,6 +46,7 @@ export async function initDatabase(): Promise<void> {
   ensureColumn('group_deliveries', 'expired', 'INTEGER DEFAULT 0');
   ensureColumn('messages', 'received_at', 'INTEGER');
   ensureColumn('messages', 'ref_id', 'TEXT');
+  ensureColumn('messages', 'reply_to', 'TEXT');
   run('CREATE INDEX IF NOT EXISTS idx_messages_ref ON messages(conversation_id, ref_id)');
   // Rows from before ref_id existed take their own id. Old inbound group rows are
   // stored under a per-member id and the shared id was never saved, so they can't be recovered.
@@ -98,6 +99,7 @@ export interface MessageRow {
   kind: ContentKind;
   text: string;
   media?: MediaAttachment;
+  replyTo?: ReplyRef;
   status: MessageStatus;
   isOutbound: boolean;
   route?: string[];
@@ -111,8 +113,8 @@ export function dbInsertMessage(m: Omit<MessageRow, 'refId'> & {refId?: string; 
   run(
     `INSERT OR IGNORE INTO messages
        (id, ref_id, conversation_id, sender_id, recipient_id, sender_alias, kind, text, media,
-        status, is_outbound, route, created_at, received_at, expires_at, read)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status, is_outbound, route, created_at, received_at, expires_at, read, reply_to)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       m.id,
       m.refId ?? m.id,
@@ -130,6 +132,7 @@ export function dbInsertMessage(m: Omit<MessageRow, 'refId'> & {refId?: string; 
       m.receivedAt ?? null,
       m.expiresAt ?? null,
       m.read === false ? 0 : 1,
+      m.replyTo ? JSON.stringify(m.replyTo) : null,
     ],
   );
 }
@@ -255,6 +258,7 @@ function rowToMessage(r: any): MessageRow {
     kind: (r.kind ?? 'text') as ContentKind,
     text: r.text ?? '',
     media: r.media ? safeJson(r.media) : undefined,
+    replyTo: r.reply_to ? safeJson(r.reply_to) : undefined,
     status: r.status as MessageStatus,
     isOutbound: r.is_outbound === 1,
     route: r.route ? safeJson(r.route) : undefined,

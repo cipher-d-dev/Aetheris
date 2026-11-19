@@ -41,7 +41,7 @@ import {
   isGroupConversation,
   useMessagesStore,
 } from './messagesStore';
-import {ContentKind, GroupInfo, MediaAttachment, MessageContent, MeshMessage} from '../types/message';
+import {ContentKind, GroupInfo, MediaAttachment, MessageContent, MeshMessage, ReplyRef} from '../types/message';
 import {uuid} from '../utils/uuid';
 import {logEvent} from '../utils/logBuffer';
 import {
@@ -116,10 +116,20 @@ export interface MeshRoute extends MeshPeer {
 
 export type MeshStatus = 'stopped' | 'starting' | 'running' | 'error';
 
+/** Strict check of a replyTo from another phone. Anything malformed is dropped. */
+function parseReplyTo(r: unknown): ReplyRef | undefined {
+  if (!r || typeof r !== 'object') return undefined;
+  const {id, senderId, snippet} = r as Record<string, unknown>;
+  const ok = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 128;
+  if (!ok(id) || !ok(senderId) || typeof snippet !== 'string') return undefined;
+  return {id, senderId, snippet: snippet.slice(0, 100)};
+}
+
 export interface OutgoingContent {
   kind: ContentKind;
   text?: string;
   media?: MediaAttachment;
+  replyTo?: ReplyRef;
 }
 
 interface MeshState {
@@ -242,6 +252,7 @@ export const useMeshService = create<MeshState>((set, get) => {
       kind,
       text: typeof content.text === 'string' ? content.text.slice(0, 4000) : '',
       media,
+      replyTo: parseReplyTo(content.replyTo),
       status: 'delivered',
       isOutbound: false,
       route: m.routing.hops,
@@ -436,6 +447,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         kind: content.kind,
         ...(content.text ? {text: content.text} : {}),
         ...(content.media ? {media: content.media} : {}),
+        ...(content.replyTo ? {replyTo: content.replyTo} : {}),
         ...(alias ? {alias} : {}),
       };
 
@@ -455,6 +467,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         kind: content.kind,
         text: content.text ?? '',
         media: content.media,
+        replyTo: content.replyTo,
         status: 'pending',
         isOutbound: true,
         createdAt: Date.now(),
@@ -512,6 +525,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         kind: m.kind,
         text: m.text || undefined,
         media: m.media,
+        replyTo: m.replyTo,
       });
       get().deleteMessage(messageId);
     },
