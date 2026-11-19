@@ -35,6 +35,7 @@ import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
 import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
+import MessageMenu, {MessageMenuAction} from '../ui/MessageMenu';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 import {routeText} from '../ui/route';
@@ -211,6 +212,7 @@ export default function ChatScreen() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [menuFor, setMenuFor] = useState<ChatMessage | null>(null);
   const listRef = useRef<FlatList>(null);
   const nearBottom = useRef(true);
   const forceStick = useRef(false);
@@ -413,29 +415,28 @@ export default function ChatScreen() {
     Alert.alert(statusLabel(m.status), text ?? delivered);
   };
 
-  const menu = (m: ChatMessage) => {
-    const del = {
-      text: 'Delete',
-      style: 'destructive' as const,
+  const menuActions = (m: ChatMessage): MessageMenuAction[] => {
+    const actions: MessageMenuAction[] = [];
+    if (m.isOutbound && m.status === 'failed')
+      actions.push({
+        key: 'retry',
+        label: 'Try again',
+        icon: 'refresh-outline',
+        onPress: () => retryMessage(m.id).catch(e => setError(String(e?.message ?? e))),
+      });
+    actions.push({key: 'info', label: 'Info', icon: 'information-circle-outline', onPress: () => info(m)});
+    actions.push({
+      key: 'delete',
+      label: 'Delete',
+      icon: 'trash-outline',
+      destructive: true,
       onPress: () =>
         Alert.alert('Delete message?', 'It will be removed from this phone.', [
           {text: 'Cancel', style: 'cancel'},
           {text: 'Delete', style: 'destructive', onPress: () => deleteMessage(m.id)},
         ]),
-    };
-    if (m.isOutbound && m.status === 'failed') {
-      Alert.alert('Not delivered', undefined, [
-        {text: 'Cancel', style: 'cancel'},
-        del,
-        {text: 'Try again', onPress: () => retryMessage(m.id).catch(e => setError(String(e?.message ?? e)))},
-      ]);
-      return;
-    }
-    Alert.alert('Message', undefined, [
-      {text: 'Cancel', style: 'cancel'},
-      del,
-      {text: 'Info', onPress: () => info(m)},
-    ]);
+    });
+    return actions;
   };
 
   type Item =
@@ -512,7 +513,7 @@ export default function ChatScreen() {
               playing={playingId === item.m.id}
               onPlay={() => play(item.m)}
               onImage={setViewer}
-              onLongPress={() => menu(item.m)}
+              onLongPress={() => setMenuFor(item.m)}
               onStatus={() => statusInfo(item.m)}
             />
           )
@@ -585,6 +586,12 @@ export default function ChatScreen() {
         )}
       </View>
 
+      <MessageMenu
+        visible={menuFor !== null}
+        onClose={() => setMenuFor(null)}
+        actions={menuFor ? menuActions(menuFor) : []}
+        preview={menuFor ? menuFor.text || (menuFor.kind === 'image' ? 'Photo' : menuFor.kind === 'audio' ? 'Voice message' : undefined) : undefined}
+      />
       <Modal visible={viewer !== null} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
         <Pressable style={styles.viewer} onPress={() => setViewer(null)}>
           {viewer && <Image source={{uri: viewer}} style={styles.viewerImage} resizeMode="contain" />}
