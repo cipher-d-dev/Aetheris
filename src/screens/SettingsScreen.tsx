@@ -10,6 +10,7 @@ import Avatar from '../ui/Avatar';
 import ListRow, {Section} from '../ui/ListRow';
 import Button from '../ui/Button';
 import {Icon} from '../ui/Icon';
+import {MESH_TIPS, MESH_TIPS_TITLE} from '../ui/meshStatus';
 
 const MODES: {mode: ThemeMode; label: string}[] = [
   {mode: 'system', label: 'Auto'},
@@ -50,15 +51,7 @@ export default function SettingsScreen() {
     Share.share({message: report}).catch(() => undefined);
   };
 
-  const tips = () =>
-    Alert.alert(
-      "Can't see someone?",
-      '• Both phones need Aetheris open (or running in the background).\n' +
-        '• Turn on Bluetooth and Location on both phones.\n' +
-        '• Stay within about 30 metres. Walls shorten the range.\n' +
-        '• Turn off battery saver for Aetheris in your phone settings.\n\n' +
-        'Messages to people who are away are kept and delivered when they come back nearby.',
-    );
+  const tips = () => Alert.alert(MESH_TIPS_TITLE, MESH_TIPS);
 
   return (
     <View style={{flex: 1, backgroundColor: t.bg}}>

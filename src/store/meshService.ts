@@ -122,6 +122,8 @@ export interface OutgoingContent {
 interface MeshState {
   status: MeshStatus;
   error?: string;
+  /** Radio error code (e.g. ADVERTISE_FAILED) when error came from the radio */
+  errorCode?: string;
   selfId?: string;
   alias: string;
   powerMode: PowerMode;
@@ -306,7 +308,7 @@ export const useMeshService = create<MeshState>((set, get) => {
 
     start: async (selfId: string) => {
       if (node && get().status === 'running') return;
-      set({status: 'starting', error: undefined, selfId});
+      set({status: 'starting', error: undefined, errorCode: undefined, selfId});
       try {
         const alias = dbGetSetting('alias') ?? '';
         const powerMode = (dbGetSetting('powerMode') as PowerMode) || 'balanced';
@@ -352,6 +354,7 @@ export const useMeshService = create<MeshState>((set, get) => {
           }),
           AetherisBridge.onLinkUp(e => {
             logEvent(`radio: link ${e.linkId} up (${e.nodeId.slice(0, 6)})`);
+            if (get().error) set({error: undefined, errorCode: undefined});
             void node?.onLinkUp(e.linkId);
           }),
           AetherisBridge.onLinkDown(e => {
@@ -365,7 +368,7 @@ export const useMeshService = create<MeshState>((set, get) => {
           }),
           AetherisBridge.onRadioError(e => {
             logEvent(`radio error ${e.code}: ${e.message}`);
-            set({error: e.message});
+            set({error: e.message, errorCode: e.code});
           }),
         ];
 
@@ -377,7 +380,7 @@ export const useMeshService = create<MeshState>((set, get) => {
         logEvent(`mesh started as ${selfId.slice(0, 6)} (${powerMode})`);
       } catch (e: any) {
         logEvent(`start failed: ${e?.message ?? e}`);
-        set({status: 'error', error: e?.message ?? String(e)});
+        set({status: 'error', error: e?.message ?? String(e), errorCode: undefined});
       }
     },
 
