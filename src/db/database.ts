@@ -45,6 +45,11 @@ export async function initDatabase(): Promise<void> {
   ensureColumn('peers', 'nickname', 'TEXT');
   ensureColumn('group_deliveries', 'expired', 'INTEGER DEFAULT 0');
   ensureColumn('messages', 'received_at', 'INTEGER');
+  ensureColumn('messages', 'ref_id', 'TEXT');
+  run('CREATE INDEX IF NOT EXISTS idx_messages_ref ON messages(conversation_id, ref_id)');
+  // Rows from before ref_id existed take their own id. Old inbound group rows are
+  // stored under a per-member id and the shared id was never saved, so they can't be recovered.
+  run('UPDATE messages SET ref_id = id WHERE ref_id IS NULL');
 
   run('DELETE FROM seen_message_ids WHERE seen_at < ?', [Date.now() - SEEN_RETENTION_MS]);
   run('DELETE FROM carried_messages WHERE expires_at < ?', [Date.now()]);
@@ -81,6 +86,11 @@ export function dbDeleteSetting(key: string): void {
 
 export interface MessageRow {
   id: string;
+  /**
+   * Id every phone in the conversation agrees on, for replies and reactions.
+   * 1:1: the mesh message id. Groups: the groupMessageId shared by all copies.
+   */
+  refId: string;
   conversationId: string;
   senderId: string;
   recipientId: string;
@@ -97,14 +107,15 @@ export interface MessageRow {
   expiresAt?: number;
 }
 
-export function dbInsertMessage(m: MessageRow & {read?: boolean}): void {
+export function dbInsertMessage(m: Omit<MessageRow, 'refId'> & {refId?: string; read?: boolean}): void {
   run(
     `INSERT OR IGNORE INTO messages
-       (id, conversation_id, sender_id, recipient_id, sender_alias, kind, text, media,
+       (id, ref_id, conversation_id, sender_id, recipient_id, sender_alias, kind, text, media,
         status, is_outbound, route, created_at, received_at, expires_at, read)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       m.id,
+      m.refId ?? m.id,
       m.conversationId,
       m.senderId,
       m.recipientId,
@@ -189,6 +200,11 @@ export function dbListConversations(): ConversationRow[] {
   }));
 }
 
+export function dbFindByRef(conversationId: string, refId: string): MessageRow | null {
+  const r = rows('SELECT * FROM messages WHERE conversation_id = ? AND ref_id = ? LIMIT 1', [conversationId, refId])[0];
+  return r ? rowToMessage(r) : null;
+}
+
 export function dbGetMessage(id: string): MessageRow | null {
   const r = rows('SELECT * FROM messages WHERE id = ?', [id])[0];
   return r ? rowToMessage(r) : null;
@@ -231,6 +247,7 @@ export function dbPendingOutboundIds(): string[] {
 function rowToMessage(r: any): MessageRow {
   return {
     id: r.id,
+    refId: r.ref_id ?? r.id,
     conversationId: r.conversation_id,
     senderId: r.sender_id,
     recipientId: r.recipient_id,

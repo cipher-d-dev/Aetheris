@@ -4,6 +4,7 @@ import type {ChatMessage} from '../../store/messagesStore';
 
 const msg = (id: string, createdAt: number): ChatMessage => ({
   id,
+  refId: id,
   conversationId: 'c',
   senderId: 'a',
   recipientId: 'b',

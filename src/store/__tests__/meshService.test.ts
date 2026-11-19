@@ -29,7 +29,7 @@ import initSqlJs from 'sql.js';
 import sodium from 'react-native-sodium';
 import {Buffer} from 'buffer';
 import {AetherisBridge} from '../../native/AetherisBridge';
-import {initDatabase, dbGetConversation, dbGetGroup, dbListConversations} from '../../db/database';
+import {initDatabase, dbFindByRef, dbGetConversation, dbGetGroup, dbListConversations} from '../../db/database';
 import {useMeshService} from '../meshService';
 import {displayName, useMessagesStore} from '../messagesStore';
 import {
@@ -121,6 +121,10 @@ describe('meshService with a peer phone', () => {
     const row = dbGetConversation(bob.id).find(m => m.id === id)!;
     expect(row.status).toBe('delivered');
     expect(row.route).toEqual([]);
+    // Bob's phone stores the mesh id as-is, so his reference id is this same id.
+    expect(row.refId).toBe(id);
+    expect(bobInbox.at(-1)!.m.id).toBe(id);
+    expect(dbFindByRef(bob.id, id)?.id).toBe(id);
   });
 
   it('stores incoming messages in the right conversation and notifies', async () => {
@@ -128,6 +132,7 @@ describe('meshService with a peer phone', () => {
     await settle();
     const conv = dbGetConversation(bob.id);
     expect(conv.at(-1)).toMatchObject({text: 'hi from bob', isOutbound: false, senderAlias: 'Bob'});
+    expect(conv.at(-1)!.refId).toBe(conv.at(-1)!.id); // 1:1: the mesh id
     const list = useMessagesStore.getState().conversations;
     expect(list[0]).toMatchObject({id: bob.id, title: 'Bob', unread: 1});
     expect(bridge.showMessageNotification).toHaveBeenCalledWith(bob.id, 'Bob', 'hi from bob');
@@ -169,6 +174,29 @@ describe('meshService with a peer phone', () => {
     const msg = useMessagesStore.getState().messages[conversationId].find(m => m.id === id)!;
     expect(msg).toMatchObject({deliveredCount: 1, recipientCount: 2, status: 'sent'});
     expect(useMeshService.getState().carrying).toBeGreaterThan(0);
+
+    // The sender's row and every copy carry one shared id.
+    expect(toBob.groupMessageId).toBe(id);
+    expect(dbFindByRef(conversationId, id)).toMatchObject({id, refId: id, isOutbound: true});
+  });
+
+  it('stores a received group copy under its shared refId, not its own id', async () => {
+    const gid = 'g-ref';
+    await bobNode.send({
+      recipientId: me.id,
+      content: {
+        kind: 'text',
+        text: 'group ref',
+        group: {id: gid, name: 'Refs', members: [bob.id, me.id]},
+        groupMessageId: 'shared-1',
+      },
+    });
+    await settle();
+    const row = dbGetConversation(`group:${gid}`).at(-1)!;
+    expect(row.id).not.toBe('shared-1');
+    expect(row.refId).toBe('shared-1');
+    expect(dbFindByRef(`group:${gid}`, 'shared-1')?.id).toBe(row.id);
+    expect(dbFindByRef(`group:${gid}`, 'nope')).toBeNull();
   });
 
   it('learns a group from the first message a member sends', async () => {

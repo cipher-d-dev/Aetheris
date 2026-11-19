@@ -234,6 +234,7 @@ export const useMeshService = create<MeshState>((set, get) => {
 
     dbInsertMessage({
       id: m.id,
+      refId: typeof content.groupMessageId === 'string' ? content.groupMessageId.slice(0, 64) : m.id,
       conversationId,
       senderId,
       recipientId: self,
@@ -447,6 +448,7 @@ export const useMeshService = create<MeshState>((set, get) => {
 
       dbInsertMessage({
         id,
+        refId: id, // groups: also the groupMessageId on every copy below
         conversationId,
         senderId: self,
         recipientId: group ? conversationId : conversationId,
