@@ -14,6 +14,7 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -206,6 +207,7 @@ export default function ChatScreen() {
 
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [recordingSince, setRecordingSince] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -415,6 +417,27 @@ export default function ChatScreen() {
     Alert.alert(statusLabel(m.status), text ?? delivered);
   };
 
+  const copyMessage = (text: string) => {
+    if (typeof AetherisBridge.copyText !== 'function') {
+      setError("Couldn't copy");
+      return;
+    }
+    AetherisBridge.copyText(text).then(
+      () => {
+        // Android 13+ shows its own clipboard confirmation.
+        if (Number(Platform.Version) >= 33) return;
+        setNotice('Copied');
+      },
+      () => setError("Couldn't copy"),
+    );
+  };
+
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(''), 2000);
+    return () => clearTimeout(id);
+  }, [notice]);
+
   const menuActions = (m: ChatMessage): MessageMenuAction[] => {
     const actions: MessageMenuAction[] = [];
     if (m.isOutbound && m.status === 'failed')
@@ -424,6 +447,8 @@ export default function ChatScreen() {
         icon: 'refresh-outline',
         onPress: () => retryMessage(m.id).catch(e => setError(String(e?.message ?? e))),
       });
+    if (m.text)
+      actions.push({key: 'copy', label: 'Copy', icon: 'copy-outline', onPress: () => copyMessage(m.text)});
     actions.push({key: 'info', label: 'Info', icon: 'information-circle-outline', onPress: () => info(m)});
     actions.push({
       key: 'delete',
@@ -545,6 +570,12 @@ export default function ChatScreen() {
           <Text style={[styles.errorText, {color: t.danger}]}>{error}</Text>
           <Icon name="close" size={16} color={t.danger} />
         </Pressable>
+      )}
+
+      {notice !== '' && (
+        <View style={[styles.error, {backgroundColor: t.surfaceAlt}]}>
+          <Text style={[styles.errorText, {color: t.textSub}]}>{notice}</Text>
+        </View>
       )}
 
       {/* Composer */}

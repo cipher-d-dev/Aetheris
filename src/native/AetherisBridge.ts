@@ -71,6 +71,9 @@ export const AetherisBridge = {
     AetherisNativeModule.playAudio(id, data),
   stopAudio: (): Promise<void> => AetherisNativeModule.stopAudio(),
 
+  // ─── Clipboard ──────────────────────────────────────────────────────────
+  copyText: (text: string): Promise<void> => AetherisNativeModule.copyText(text),
+
   // ─── Notifications ──────────────────────────────────────────────────────
   showMessageNotification: (conversationId: string, title: string, body: string): Promise<boolean> =>
     AetherisNativeModule.showMessageNotification(conversationId, title, body),

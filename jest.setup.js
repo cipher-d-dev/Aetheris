@@ -141,6 +141,7 @@ jest.mock('./src/native/AetherisBridge', () => {
       cancelRecording: jest.fn(() => Promise.resolve()),
       playAudio: jest.fn(() => Promise.resolve()),
       stopAudio: jest.fn(() => Promise.resolve()),
+      copyText: jest.fn(() => Promise.resolve()),
       showMessageNotification: jest.fn(() => Promise.resolve(true)),
       onPeerFound: jest.fn(sub),
       onPeerLost: jest.fn(sub),
