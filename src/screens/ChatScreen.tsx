@@ -37,6 +37,7 @@ import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
 import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
+import SwipeToReply from '../ui/SwipeToReply';
 import MessageMenu, {MessageMenuAction} from '../ui/MessageMenu';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import {buildItems, findArrivalsAbove} from '../ui/chatItems';
@@ -115,6 +116,7 @@ function Bubble({
   highlight,
   quote,
   onQuote,
+  onReply,
 }: {
   m: ChatMessage;
   first: boolean;
@@ -128,6 +130,7 @@ function Bubble({
   highlight: boolean;
   quote: ReturnType<typeof resolveQuote> | null;
   onQuote: (targetId: string | null) => void;
+  onReply?: () => void;
 }) {
   const {theme: t} = useThemeStore();
   const out = m.isOutbound;
@@ -159,7 +162,7 @@ function Bubble({
     </View>
   );
 
-  return (
+  const row = (
     <View
       style={[
         styles.row,
@@ -171,6 +174,12 @@ function Bubble({
         {...(m.kind === 'audio' && {
           accessibilityRole: 'button' as const,
           accessibilityLabel: playing ? 'Pause voice message' : 'Play voice message',
+        })}
+        {...(onReply && {
+          accessibilityActions: [{name: 'reply', label: 'Reply'}],
+          onAccessibilityAction: (e: {nativeEvent: {actionName: string}}) => {
+            if (e.nativeEvent.actionName === 'reply') onReply();
+          },
         })}
         onLongPress={onLongPress}
         delayLongPress={300}
@@ -233,6 +242,7 @@ function Bubble({
       </Pressable>
     </View>
   );
+  return onReply ? <SwipeToReply onReply={onReply}>{row}</SwipeToReply> : row;
 }
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -484,6 +494,11 @@ export default function ChatScreen() {
     else setInput(cur => cur || sent);
   };
 
+  const startReply = (m: ChatMessage) => {
+    setReplyingTo(m);
+    inputRef.current?.focus();
+  };
+
   const replyContent = (m: ChatMessage | null) =>
     m ? {replyTo: {id: m.refId, senderId: m.senderId, snippet: replySnippet(m)}} : {};
 
@@ -640,10 +655,7 @@ export default function ChatScreen() {
         key: 'reply',
         label: 'Reply',
         icon: 'arrow-undo-outline',
-        onPress: () => {
-          setReplyingTo(m);
-          inputRef.current?.focus();
-        },
+        onPress: () => startReply(m),
       });
     if (m.text)
       actions.push({key: 'copy', label: 'Copy', icon: 'copy-outline', onPress: () => copyMessage(m.text)});
@@ -731,6 +743,7 @@ export default function ChatScreen() {
               onStatus={() => statusInfo(item.m)}
               quote={item.m.replyTo ? resolveQuote(item.m.replyTo, messages, selfId, displayName) : null}
               onQuote={onQuote}
+              onReply={item.m.isOutbound && item.m.status === 'failed' ? undefined : () => startReply(item.m)}
             />
           )
         }
