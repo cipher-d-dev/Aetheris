@@ -29,11 +29,11 @@ import {
 import {MAX_MEDIA_BASE64, useMeshService} from '../store/meshService';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
-import {dbGetGroup} from '../db/database';
+import {dbGetGroup, dbGroupDeliveries} from '../db/database';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
-import {statusLabel} from '../ui/a11y';
+import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
@@ -70,7 +70,7 @@ function waveform(seed: string, bars = 28): number[] {
 
 // ─── Ticks ────────────────────────────────────────────────────────────────────
 
-function Ticks({m, color}: {m: ChatMessage; color: string}) {
+function Ticks({m, color, onPress}: {m: ChatMessage; color: string; onPress: () => void}) {
   const icon =
     m.status === 'pending' ? (
       <Icon name="time-outline" size={14} color={color} />
@@ -84,9 +84,13 @@ function Ticks({m, color}: {m: ChatMessage; color: string}) {
       />
     );
   return (
-    <View accessible accessibilityLabel={statusLabel(m.status)}>
+    <Pressable
+      hitSlop={12}
+      accessibilityRole="button"
+      accessibilityLabel={`${statusLabel(m.status)}, tap for details`}
+      onPress={onPress}>
       {icon}
-    </View>
+    </Pressable>
   );
 }
 
@@ -101,6 +105,7 @@ function Bubble({
   onPlay,
   onImage,
   onLongPress,
+  onStatus,
 }: {
   m: ChatMessage;
   first: boolean;
@@ -110,6 +115,7 @@ function Bubble({
   onPlay: () => void;
   onImage: (uri: string) => void;
   onLongPress: () => void;
+  onStatus: () => void;
 }) {
   const {theme: t} = useThemeStore();
   const out = m.isOutbound;
@@ -129,7 +135,7 @@ function Bubble({
   const timeAndTicks = (
     <View style={styles.meta}>
       <Text style={[styles.metaText, {color: meta}]}>{formatClock(m.createdAt)}</Text>
-      {out && <Ticks m={m} color={meta} />}
+      {out && <Ticks m={m} color={meta} onPress={onStatus} />}
     </View>
   );
 
@@ -372,21 +378,36 @@ export default function ChatScreen() {
     AetherisBridge.playAudio(m.id, m.media.data).catch(() => setPlayingId(null));
   };
 
+  const explain = (m: ChatMessage) =>
+    deliveryExplanation(m, {
+      name: title,
+      now: Date.now(),
+      isGroup,
+      waitingNames: isGroup
+        ? dbGroupDeliveries(m.id)
+            .filter(d => !d.delivered)
+            .map(d => displayName(d.memberId))
+        : [],
+    });
+
   const info = (m: ChatMessage) => {
     const routeLine = routeText(m.route, m.isOutbound, selfId, id => displayName(id));
     const viaText = routeLine ? `\n\n${routeLine}` : '';
+    const waiting = explain(m);
     let text: string;
-    if (!m.isOutbound) text = `Received at ${formatClock(m.createdAt)}.${viaText}`;
-    else if (m.status === 'delivered')
+    if (waiting) text = `${waiting}${viaText}`;
+    else if (!m.isOutbound) text = `Received at ${formatClock(m.createdAt)}.${viaText}`;
+    else
       text = m.recipientCount
         ? `Delivered to ${m.deliveredCount} of ${m.recipientCount}.`
         : `Delivered.${viaText}`;
-    else if (m.status === 'failed') text = "This message couldn't be delivered.";
-    else
-      text = isGroup
-        ? `Delivered to ${m.deliveredCount ?? 0} of ${m.recipientCount ?? 0}. The rest get it when they're nearby.`
-        : `Not delivered yet. ${title} will get it when they're nearby.`;
     Alert.alert('Message info', text);
+  };
+
+  const statusInfo = (m: ChatMessage) => {
+    const text = explain(m);
+    const delivered = m.recipientCount ? `Delivered to ${m.deliveredCount} of ${m.recipientCount}.` : 'Delivered.';
+    Alert.alert(statusLabel(m.status), text ?? delivered);
   };
 
   const menu = (m: ChatMessage) => {
@@ -489,6 +510,7 @@ export default function ChatScreen() {
               onPlay={() => play(item.m)}
               onImage={setViewer}
               onLongPress={() => menu(item.m)}
+              onStatus={() => statusInfo(item.m)}
             />
           )
         }
