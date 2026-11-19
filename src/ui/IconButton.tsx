@@ -11,6 +11,7 @@ export default function IconButton({
   filled = false,
   style,
   disabled,
+  accessibilityLabel,
 }: {
   name: string;
   onPress?: () => void;
@@ -19,12 +20,16 @@ export default function IconButton({
   filled?: boolean;
   style?: ViewStyle;
   disabled?: boolean;
+  accessibilityLabel: string;
 }) {
   const {theme: t} = useThemeStore();
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{disabled: !!disabled}}
       hitSlop={8}
       style={({pressed}) => [
         styles.base,

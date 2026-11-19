@@ -79,12 +79,14 @@ export default function SettingsScreen() {
 
         <Section title="Appearance">
           <View style={styles.segmentWrap}>
-            <View style={[styles.segment, {backgroundColor: t.surfaceAlt}]}>
+            <View accessibilityRole="radiogroup" style={[styles.segment, {backgroundColor: t.surfaceAlt}]}>
               {MODES.map(m => {
                 const on = mode === m.mode;
                 return (
                   <Pressable
                     key={m.mode}
+                    accessibilityRole="radio"
+                    accessibilityState={{checked: on}}
                     onPress={() => chooseMode(m.mode)}
                     style={[styles.segmentItem, on && {backgroundColor: t.bg}]}>
                     <Text style={[styles.segmentText, {color: on ? t.text : t.textSub}]}>{m.label}</Text>

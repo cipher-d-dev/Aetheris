@@ -56,7 +56,7 @@ export default function ContactInfoScreen() {
   return (
     <View style={{flex: 1, backgroundColor: t.bg}}>
       <View style={styles.header}>
-        <IconButton name="chevron-back" size={26} onPress={() => navigation.goBack()} />
+        <IconButton accessibilityLabel="Back" name="chevron-back" size={26} onPress={() => navigation.goBack()} />
       </View>
       <ScrollView contentContainerStyle={{paddingBottom: 40}}>
         <View style={styles.hero}>

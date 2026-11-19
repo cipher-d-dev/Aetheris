@@ -27,7 +27,7 @@ export default function NewGroupScreen() {
   return (
     <View style={[styles.container, {backgroundColor: t.bg}]}>
       <View style={styles.header}>
-        <IconButton name="chevron-back" onPress={() => navigation.goBack()} />
+        <IconButton accessibilityLabel="Back" name="chevron-back" onPress={() => navigation.goBack()} />
         <Text style={[Type.title, {color: t.text, flex: 1}]}>New group</Text>
       </View>
 
@@ -62,6 +62,8 @@ export default function NewGroupScreen() {
               <PersonRow
                 person={item}
                 onPress={() => toggle(item.id)}
+                accessibilityRole="checkbox"
+                accessibilityState={{checked: on}}
                 right={
                   <Icon
                     name={on ? 'checkmark-circle' : 'ellipse-outline'}

@@ -1,5 +1,8 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  ScrollView,
   View,
   Text,
   StyleSheet,
@@ -28,8 +31,9 @@ import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
 import {dbGetGroup} from '../db/database';
 import {useIdentityStore} from '../store/identityStore';
-import Avatar, {avatarColor} from '../ui/Avatar';
+import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
+import {statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 
@@ -65,10 +69,23 @@ function waveform(seed: string, bars = 28): number[] {
 // ─── Ticks ────────────────────────────────────────────────────────────────────
 
 function Ticks({m, color}: {m: ChatMessage; color: string}) {
-  if (m.status === 'pending') return <Icon name="time-outline" size={14} color={color} />;
-  if (m.status === 'failed') return <Icon name="alert-circle" size={15} color="#FFD7D9" />;
-  const delivered = m.status === 'delivered';
-  return <Icon name={delivered ? 'checkmark-done' : 'checkmark'} size={16} color={delivered ? '#FFFFFF' : color} />;
+  const icon =
+    m.status === 'pending' ? (
+      <Icon name="time-outline" size={14} color={color} />
+    ) : m.status === 'failed' ? (
+      <Icon name="alert-circle" size={15} color="#FFD7D9" />
+    ) : (
+      <Icon
+        name={m.status === 'delivered' ? 'checkmark-done' : 'checkmark'}
+        size={16}
+        color={m.status === 'delivered' ? '#FFFFFF' : color}
+      />
+    );
+  return (
+    <View accessible accessibilityLabel={statusLabel(m.status)}>
+      {icon}
+    </View>
+  );
 }
 
 // ─── Bubble ───────────────────────────────────────────────────────────────────
@@ -117,6 +134,10 @@ function Bubble({
   return (
     <View style={[styles.row, out ? styles.rowOut : styles.rowIn, last && {marginBottom: 6}]}>
       <Pressable
+        {...(m.kind === 'audio' && {
+          accessibilityRole: 'button' as const,
+          accessibilityLabel: playing ? 'Pause voice message' : 'Play voice message',
+        })}
         onLongPress={onLongPress}
         delayLongPress={300}
         onPress={() => (uri ? onImage(uri) : m.kind === 'audio' ? onPlay() : undefined)}
@@ -128,7 +149,7 @@ function Bubble({
           !t.isDark && !out && styles.inShadow,
         ]}>
         {showSender && !out && (
-          <Text style={[styles.sender, {color: avatarColor(m.senderId)}]}>
+          <Text style={[styles.sender, {color: senderTextColor(m.senderId, t.isDark)}]}>
             {displayName(m.senderId, m.senderAlias)}
           </Text>
         )}
@@ -179,7 +200,12 @@ export default function ChatScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
   const listRef = useRef<FlatList>(null);
+  const nearBottom = useRef(true);
+  const forceStick = useRef(false);
+  const lastSeenId = useRef<string | undefined>(undefined);
+  const lastOffset = useRef(0);
 
   useEffect(() => {
     loadMessages(conversationId);
@@ -213,7 +239,53 @@ export default function ChatScreen() {
         .join(', ')
     : presenceText(conversationId, routes);
 
+  const last = messages[messages.length - 1];
+  const lastId = last?.id;
+  const lastInbound = last ? !last.isOutbound : false;
+  useEffect(() => {
+    if (lastId === lastSeenId.current) return;
+    lastSeenId.current = lastId;
+    if (lastInbound && !nearBottom.current) setShowNew(true);
+  }, [lastId, lastInbound]);
+
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const {contentOffset, layoutMeasurement, contentSize} = e.nativeEvent;
+    const y = contentOffset.y;
+    if (contentSize.height - (y + layoutMeasurement.height) < 80) {
+      nearBottom.current = true;
+      setShowNew(false);
+    } else if (y < lastOffset.current) {
+      // Only an upward scroll means the user left the bottom. Our own jumps
+      // to the bottom only move down, and their scroll event can arrive after
+      // a new message has already grown the content.
+      nearBottom.current = false;
+    }
+    lastOffset.current = y;
+  };
+
+  // Scroll the underlying ScrollView, which uses the real content height.
+  // FlatList.scrollToEnd uses the list's own size estimate, which can lag
+  // behind the newest message and leave it just out of view.
+  const scrollToBottom = (animated: boolean) => {
+    const scrollView = listRef.current?.getNativeScrollRef() as ScrollView | null | undefined;
+    scrollView?.scrollToEnd({animated});
+  };
+
+  const onContentSizeChange = () => {
+    if (nearBottom.current || forceStick.current) {
+      scrollToBottom(false);
+      nearBottom.current = true;
+      forceStick.current = false;
+    }
+  };
+
+  const jumpToNew = () => {
+    scrollToBottom(true);
+    setShowNew(false);
+  };
+
   const send = async (content: Parameters<typeof sendToConversation>[1]) => {
+    forceStick.current = true;
     setError('');
     if (status !== 'running') {
       setError("Can't send yet — Aetheris is still starting. Check Bluetooth is on.");
@@ -362,7 +434,7 @@ export default function ChatScreen() {
     <KeyboardAvoidingView style={{flex: 1, backgroundColor: t.chatBg}} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Header */}
       <View style={[styles.header, {backgroundColor: t.bg, borderBottomColor: t.separator}]}>
-        <IconButton name="chevron-back" size={26} onPress={() => navigation.goBack()} />
+        <IconButton accessibilityLabel="Back" name="chevron-back" size={26} onPress={() => navigation.goBack()} />
         <Pressable
           style={styles.headerWho}
           onPress={() => navigation.navigate('ContactInfo', {conversationId})}>
@@ -378,12 +450,15 @@ export default function ChatScreen() {
         </Pressable>
       </View>
 
+      <View style={styles.listWrap}>
       <FlatList
         ref={listRef}
         data={items}
         keyExtractor={i => i.key}
         contentContainerStyle={styles.list}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({animated: false})}
+        onContentSizeChange={onContentSizeChange}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
         ListHeaderComponent={
           <View style={[styles.notice, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
             <Icon name="lock-closed" size={13} color={t.textMuted} />
@@ -414,6 +489,17 @@ export default function ChatScreen() {
           )
         }
       />
+      {showNew && (
+        <Pressable
+          onPress={jumpToNew}
+          accessibilityRole="button"
+          accessibilityLabel="Scroll to new messages"
+          style={[styles.newPill, {backgroundColor: t.surface}]}>
+          <Icon name="arrow-down" size={14} color={t.primary} />
+          <Text style={[styles.newPillText, {color: t.text}]}>New messages</Text>
+        </Pressable>
+      )}
+      </View>
 
       {!isGroup && !nearby && messages.some(m => m.isOutbound && m.status !== 'delivered' && m.status !== 'failed') && (
         <View style={[styles.away, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
@@ -435,13 +521,13 @@ export default function ChatScreen() {
       <View style={[styles.composer, {backgroundColor: t.bg}]}>
         {recording ? (
           <>
-            <IconButton name="trash-outline" color={t.danger} onPress={cancelRecording} />
+            <IconButton accessibilityLabel="Discard recording" name="trash-outline" color={t.danger} onPress={cancelRecording} />
             <View style={[styles.recording, {backgroundColor: t.surface}]}>
               <View style={[styles.recDot, {backgroundColor: t.danger}]} />
               <Text style={[styles.recText, {color: t.text}]}>{duration(elapsed)}</Text>
               <Text style={[styles.recHint, {color: t.textMuted}]}>Recording…</Text>
             </View>
-            <IconButton name="send" size={20} filled onPress={finishRecording} style={styles.sendButton} />
+            <IconButton accessibilityLabel="Send voice message" name="send" size={20} filled onPress={finishRecording} style={styles.sendButton} />
           </>
         ) : (
           <>
@@ -458,13 +544,13 @@ export default function ChatScreen() {
               {busy ? (
                 <ActivityIndicator color={t.primary} style={{marginRight: 12}} />
               ) : (
-                <IconButton name="camera-outline" size={23} color={t.textSub} onPress={attachPhoto} style={styles.inlineIcon} />
+                <IconButton accessibilityLabel="Attach photo" name="camera-outline" size={23} color={t.textSub} onPress={attachPhoto} style={styles.inlineIcon} />
               )}
             </View>
             {input.trim() ? (
-              <IconButton name="send" size={20} filled onPress={sendText} style={styles.sendButton} />
+              <IconButton accessibilityLabel="Send message" name="send" size={20} filled onPress={sendText} style={styles.sendButton} />
             ) : (
-              <IconButton name="mic" size={22} filled onPress={startRecording} style={styles.sendButton} />
+              <IconButton accessibilityLabel="Record voice message" name="mic" size={22} filled onPress={startRecording} style={styles.sendButton} />
             )}
           </>
         )}
@@ -484,6 +570,9 @@ const styles = StyleSheet.create({
   headerWho: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 11},
   headerName: {fontFamily: Font.semiBold, fontSize: 16.5},
   headerSub: {fontFamily: Font.medium, fontSize: 12.5, marginTop: 1},
+  listWrap: {flex: 1},
+  newPill: {position: 'absolute', bottom: 12, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18, shadowColor: '#0F1419', shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: {width: 0, height: 2}, elevation: 4},
+  newPillText: {fontFamily: Font.semiBold, fontSize: 13},
   list: {paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12, flexGrow: 1},
   notice: {flexDirection: 'row', gap: 8, alignSelf: 'center', maxWidth: 320, padding: 10, paddingHorizontal: 12, borderRadius: 12, marginBottom: 12, alignItems: 'flex-start'},
   noticeText: {flex: 1, fontFamily: Font.regular, fontSize: 12, lineHeight: 17, textAlign: 'center'},
