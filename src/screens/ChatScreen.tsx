@@ -44,6 +44,7 @@ import {buildItems, findArrivalsAbove} from '../ui/chatItems';
 import {isLate, lateAccessibilityLabel, lateLabel} from '../ui/late';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 import {replySnippet, resolveQuote} from '../ui/reply';
+import {groupReactions, nextReaction, REACTIONS, REACTION_NAMES} from '../ui/reactions';
 import {routeText} from '../ui/route';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -117,6 +118,8 @@ function Bubble({
   quote,
   onQuote,
   onReply,
+  reactions,
+  onReact,
 }: {
   m: ChatMessage;
   first: boolean;
@@ -131,6 +134,9 @@ function Bubble({
   quote: ReturnType<typeof resolveQuote> | null;
   onQuote: (targetId: string | null) => void;
   onReply?: () => void;
+  /** Chips under the bubble; tapping one reacts with (or removes) that emoji. */
+  reactions: ReturnType<typeof groupReactions>;
+  onReact: (emoji: string) => void;
 }) {
   const {theme: t} = useThemeStore();
   const out = m.isOutbound;
@@ -170,6 +176,7 @@ function Bubble({
         last && {marginBottom: 6},
         highlight && {backgroundColor: t.primarySoft},
       ]}>
+      <View style={[styles.stack, out ? styles.stackOut : styles.stackIn]}>
       <Pressable
         {...(m.kind === 'audio' && {
           accessibilityRole: 'button' as const,
@@ -240,6 +247,29 @@ function Bubble({
           <View style={[styles.metaWrap, uri && styles.metaOnImage]}>{timeAndTicks}</View>
         )}
       </Pressable>
+      {reactions.length > 0 && (
+        <View style={[styles.chips, out ? styles.chipsOut : styles.chipsIn]}>
+          {reactions.map(g => (
+            <Pressable
+              key={g.emoji}
+              accessibilityRole="button"
+              accessibilityLabel={
+                g.mine
+                  ? `${g.emoji} ${g.count}, including you. Tap to remove`
+                  : `${g.emoji} ${g.count}. Tap to react with ${REACTION_NAMES[g.emoji]}`
+              }
+              hitSlop={8}
+              onPress={() => onReact(g.mine ? '' : g.emoji)}
+              style={[
+                styles.chip,
+                {backgroundColor: g.mine ? t.primarySoft : t.surface, borderColor: g.mine ? t.primary : t.border},
+              ]}>
+              <Text style={styles.chipText}>{g.count > 1 ? `${g.emoji} ${g.count}` : g.emoji}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+      </View>
     </View>
   );
   return onReply ? <SwipeToReply onReply={onReply}>{row}</SwipeToReply> : row;
@@ -258,9 +288,10 @@ export default function ChatScreen() {
 
   const stored = useMessagesStore(s => s.messages[conversationId]);
   const messages = useMemo(() => stored ?? [], [stored]);
+  const reactionsByRef = useMessagesStore(s => s.reactions[conversationId]);
   const anchor = useMessagesStore(s => s.unreadAnchor);
   const {loadMessages, setActiveConversation} = useMessagesStore.getState();
-  const {sendToConversation, routes, status, deleteMessage, retryMessage} = useMeshService();
+  const {sendToConversation, routes, status, deleteMessage, retryMessage, sendReaction} = useMeshService();
 
   const [input, setInput] = useState(() => useDraftsStore.getState().drafts[conversationId] ?? '');
   const changeInput = (text: string) => {
@@ -641,6 +672,34 @@ export default function ChatScreen() {
     return () => clearTimeout(id);
   }, [notice]);
 
+  const react = (m: ChatMessage, emoji: string) =>
+    sendReaction(conversationId, m.refId, emoji).catch(e => setError(String(e?.message ?? e)));
+
+  const reactionRow = (m: ChatMessage) => {
+    const mine = reactionsByRef?.[m.refId]?.find(r => r.reactorId === selfId)?.emoji;
+    return (
+      <View style={styles.reactionRow}>
+        {REACTIONS.map(emoji => {
+          const selected = mine === emoji;
+          return (
+            <Pressable
+              key={emoji}
+              accessibilityRole="button"
+              accessibilityLabel={`React with ${REACTION_NAMES[emoji]}`}
+              accessibilityState={{selected}}
+              onPress={() => {
+                setMenuFor(null);
+                react(m, nextReaction(mine, emoji));
+              }}
+              style={[styles.reactionBtn, selected && {backgroundColor: t.primarySoft}]}>
+              <Text style={styles.reactionEmoji}>{emoji}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    );
+  };
+
   const menuActions = (m: ChatMessage): MessageMenuAction[] => {
     const actions: MessageMenuAction[] = [];
     if (m.isOutbound && m.status === 'failed')
@@ -743,6 +802,8 @@ export default function ChatScreen() {
               onStatus={() => statusInfo(item.m)}
               quote={item.m.replyTo ? resolveQuote(item.m.replyTo, messages, selfId, displayName) : null}
               onQuote={onQuote}
+              reactions={groupReactions(reactionsByRef?.[item.m.refId] ?? [], selfId)}
+              onReact={emoji => react(item.m, emoji)}
               onReply={item.m.isOutbound && item.m.status === 'failed' ? undefined : () => startReply(item.m)}
             />
           )
@@ -843,6 +904,7 @@ export default function ChatScreen() {
         visible={menuFor !== null}
         onClose={() => setMenuFor(null)}
         actions={menuFor ? menuActions(menuFor) : []}
+        header={menuFor && !(menuFor.isOutbound && menuFor.status === 'failed') ? reactionRow(menuFor) : undefined}
         preview={menuFor ? menuFor.text || (menuFor.kind === 'image' ? 'Photo' : menuFor.kind === 'audio' ? 'Voice message' : undefined) : undefined}
       />
       <Modal visible={viewer !== null} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
@@ -870,6 +932,17 @@ const styles = StyleSheet.create({
   row: {flexDirection: 'row', marginVertical: 1.5},
   rowOut: {justifyContent: 'flex-end', paddingLeft: 56},
   rowIn: {justifyContent: 'flex-start', paddingRight: 56},
+  stack: {maxWidth: '100%'},
+  stackOut: {alignItems: 'flex-end'},
+  stackIn: {alignItems: 'flex-start'},
+  chips: {flexDirection: 'row', gap: 4, marginTop: -6, paddingHorizontal: 8},
+  chipsOut: {justifyContent: 'flex-end'},
+  chipsIn: {justifyContent: 'flex-start'},
+  chip: {minHeight: 24, paddingHorizontal: 7, borderRadius: 12, borderWidth: 1, justifyContent: 'center'},
+  chipText: {fontSize: 13},
+  reactionRow: {flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 12, paddingVertical: 6},
+  reactionBtn: {width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center'},
+  reactionEmoji: {fontSize: 26},
   bubble: {paddingHorizontal: 12, paddingTop: 8, paddingBottom: 7, maxWidth: '100%'},
   inShadow: {shadowColor: '#0F1419', shadowOpacity: 0.06, shadowRadius: 2, shadowOffset: {width: 0, height: 1}, elevation: 1},
   imageBubble: {padding: 3, width: 260},
