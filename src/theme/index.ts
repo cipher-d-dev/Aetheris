@@ -45,10 +45,10 @@ export const lightTheme = {
   chatBg: '#F2F3F7',
   bubbleOut: '#5B5BD6',
   bubbleOutText: '#FFFFFF',
-  bubbleOutMeta: 'rgba(255,255,255,0.72)',
+  bubbleOutMeta: 'rgba(255,255,255,0.9)', // 4.7:1 on bubbleOut
   bubbleIn: '#FFFFFF',
   bubbleInText: '#0F1419',
-  bubbleInMeta: '#8C96A3',
+  bubbleInMeta: '#6B7480', // 4.7:1 on bubbleIn
 
   online: '#22C55E',
   danger: '#E5484D',
@@ -81,10 +81,10 @@ export const darkTheme: AppTheme = {
   chatBg: '#0A0B0E',
   bubbleOut: '#5B5BD6',
   bubbleOutText: '#FFFFFF',
-  bubbleOutMeta: 'rgba(255,255,255,0.68)',
+  bubbleOutMeta: 'rgba(255,255,255,0.9)', // 4.7:1 on bubbleOut
   bubbleIn: '#1C1D24',
   bubbleInText: '#EEEFF2',
-  bubbleInMeta: '#7C8190',
+  bubbleInMeta: '#8E94A3', // 5.5:1 on bubbleIn
 
   online: '#34D399',
   danger: '#FF6369',

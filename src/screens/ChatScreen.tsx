@@ -560,9 +560,20 @@ export default function ChatScreen() {
       </View>
 
       <Modal visible={viewer !== null} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
-        <Pressable style={styles.viewer} onPress={() => setViewer(null)}>
-          {viewer && <Image source={{uri: viewer}} style={styles.viewerImage} resizeMode="contain" />}
+        <Pressable style={styles.viewer} onPress={() => setViewer(null)} accessible={false}>
+          {viewer && (
+            <Image source={{uri: viewer}} style={styles.viewerImage} resizeMode="contain" accessibilityLabel="Photo" />
+          )}
         </Pressable>
+        {/* Tapping the photo also closes it, but that isn't discoverable, and TalkBack needs a button. */}
+        <IconButton
+          accessibilityLabel="Close photo"
+          name="close"
+          size={28}
+          color="#FFFFFF"
+          onPress={() => setViewer(null)}
+          style={{...styles.viewerClose, top: insets.top + 8}}
+        />
       </Modal>
     </KeyboardAvoidingView>
   );
@@ -617,4 +628,5 @@ const styles = StyleSheet.create({
   recHint: {fontFamily: Font.regular, fontSize: 14},
   viewer: {flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', justifyContent: 'center'},
   viewerImage: {width: '100%', height: '100%'},
+  viewerClose: {position: 'absolute', right: 12, backgroundColor: 'rgba(0,0,0,0.4)'},
 });
