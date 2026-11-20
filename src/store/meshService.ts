@@ -34,6 +34,7 @@ import {
   dbDeleteConversation,
   dbGetMessage,
   dbFindByRef,
+  dbRefUsedByOther,
   dbSetReaction,
 } from '../db/database';
 import {
@@ -128,6 +129,9 @@ function parseReplyTo(r: unknown): ReplyRef | undefined {
   if (!ok(id) || !ok(senderId) || typeof snippet !== 'string') return undefined;
   return {id, senderId, snippet: snippet.slice(0, 100)};
 }
+
+/** Shared id of a group message on every phone: the verified sender plus its groupMessageId. */
+export const groupRef = (senderId: string, groupMessageId: string) => `${senderId}:${groupMessageId}`;
 
 /** Strict check of a reaction from another phone: a known emoji, or '' to remove. */
 function parseReaction(r: unknown): {messageId: string; emoji: string} | undefined {
@@ -225,6 +229,7 @@ export const useMeshService = create<MeshState>((set, get) => {
     dbUpsertPeer(senderId, alias);
 
     let conversationId = senderId;
+    let isGroupMessage = false;
     const g = content.group;
     if (
       g &&
@@ -241,6 +246,7 @@ export const useMeshService = create<MeshState>((set, get) => {
       };
       dbUpsertGroup(group);
       conversationId = GROUP_PREFIX + group.id;
+      isGroupMessage = true;
     }
 
     if (content.reaction !== undefined) {
@@ -266,15 +272,24 @@ export const useMeshService = create<MeshState>((set, get) => {
     const store = useMessagesStore.getState();
     const visible = store.activeConversation === conversationId && AppState.currentState === 'active';
 
+    const text = typeof content.text === 'string' ? content.text.slice(0, 4000) : '';
+    // Only group messages carry a shared ref. It is scoped to the verified
+    // sender, so no other phone can claim it, even by racing the original.
+    let refId = m.id;
+    if (isGroupMessage && typeof content.groupMessageId === 'string') {
+      const claimed = groupRef(senderId, content.groupMessageId.slice(0, 64));
+      if (!dbRefUsedByOther(conversationId, claimed, senderId)) refId = claimed;
+    }
+
     dbInsertMessage({
       id: m.id,
-      refId: typeof content.groupMessageId === 'string' ? content.groupMessageId.slice(0, 64) : m.id,
+      refId,
       conversationId,
       senderId,
       recipientId: self,
       senderAlias: alias,
       kind,
-      text: typeof content.text === 'string' ? content.text.slice(0, 4000) : '',
+      text,
       media,
       replyTo: parseReplyTo(content.replyTo),
       status: 'delivered',
@@ -292,7 +307,7 @@ export const useMeshService = create<MeshState>((set, get) => {
       const title = isGroupConversation(conversationId)
         ? `${who} · ${dbGetGroup(groupIdOf(conversationId))?.name ?? 'Group'}`
         : who;
-      const body = kind === 'image' ? '📷 Photo' : kind === 'audio' ? '🎤 Voice message' : content.text ?? '';
+      const body = kind === 'image' ? '📷 Photo' : kind === 'audio' ? '🎤 Voice message' : text;
       AetherisBridge.showMessageNotification(conversationId, title, body).catch(() => undefined);
     }
   };
@@ -490,7 +505,8 @@ export const useMeshService = create<MeshState>((set, get) => {
 
       dbInsertMessage({
         id,
-        refId: id, // groups: also the groupMessageId on every copy below
+        // Groups: every member stores the same sender-scoped ref (see groupRef).
+        refId: group ? groupRef(self, id) : id,
         conversationId,
         senderId: self,
         recipientId: group ? conversationId : conversationId,

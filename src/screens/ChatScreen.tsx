@@ -30,7 +30,7 @@ import {
 import {MAX_MEDIA_BASE64, useMeshService} from '../store/meshService';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
-import {dbFirstUnread, dbGetGroup, dbGroupDeliveries} from '../db/database';
+import {dbFindByRef, dbFirstUnread, dbGetGroup, dbGroupDeliveries} from '../db/database';
 import {useDraftsStore} from '../store/draftsStore';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar, {senderTextColor} from '../ui/Avatar';
@@ -206,7 +206,7 @@ function Bubble({
         {quote && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Reply to ${quote.name}: ${quote.snippet}. Double tap to view.`}
+            accessibilityLabel={`Reply to ${quote.name}: ${quote.snippet}.${quote.unverified ? ' Original message is not on this phone, so this is unverified.' : ''} Double tap to view.`}
             onPress={() => onQuote(quote.targetId)}
             style={[
               styles.quote,
@@ -800,7 +800,7 @@ export default function ChatScreen() {
               onImage={setViewer}
               onLongPress={() => setMenuFor(item.m)}
               onStatus={() => statusInfo(item.m)}
-              quote={item.m.replyTo ? resolveQuote(item.m.replyTo, messages, selfId, displayName) : null}
+              quote={item.m.replyTo ? resolveQuote(item.m.replyTo, messages, selfId, displayName, ref => dbFindByRef(conversationId, ref)) : null}
               onQuote={onQuote}
               reactions={groupReactions(reactionsByRef?.[item.m.refId] ?? [], selfId)}
               onReact={emoji => react(item.m, emoji)}

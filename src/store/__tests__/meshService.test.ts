@@ -29,8 +29,8 @@ import initSqlJs from 'sql.js';
 import sodium from 'react-native-sodium';
 import {Buffer} from 'buffer';
 import {AetherisBridge} from '../../native/AetherisBridge';
-import {initDatabase, dbFindByRef, dbReactionsFor, dbSetReaction, dbGroupDeliveries, dbGetConversation, dbGetGroup, dbListConversations} from '../../db/database';
-import {useMeshService} from '../meshService';
+import {initDatabase, dbDeleteMessage, dbPruneOrphanReactions, dbFindByRef, dbReactionsFor, dbSetReaction, dbGroupDeliveries, dbGetConversation, dbGetGroup, dbListConversations} from '../../db/database';
+import {groupRef, useMeshService} from '../meshService';
 import {displayName, useMessagesStore} from '../messagesStore';
 import {
   dbAddGroupDelivery,
@@ -175,9 +175,9 @@ describe('meshService with a peer phone', () => {
     expect(msg).toMatchObject({deliveredCount: 1, recipientCount: 2, status: 'sent'});
     expect(useMeshService.getState().carrying).toBeGreaterThan(0);
 
-    // The sender's row and every copy carry one shared id.
+    // The sender's row and every copy carry one shared id, scoped to the sender.
     expect(toBob.groupMessageId).toBe(id);
-    expect(dbFindByRef(conversationId, id)).toMatchObject({id, refId: id, isOutbound: true});
+    expect(dbFindByRef(conversationId, groupRef(me.id, id))).toMatchObject({id, refId: groupRef(me.id, id), isOutbound: true});
   });
 
   it('stores a received group copy under its shared refId, not its own id', async () => {
@@ -194,9 +194,37 @@ describe('meshService with a peer phone', () => {
     await settle();
     const row = dbGetConversation(`group:${gid}`).at(-1)!;
     expect(row.id).not.toBe('shared-1');
-    expect(row.refId).toBe('shared-1');
-    expect(dbFindByRef(`group:${gid}`, 'shared-1')?.id).toBe(row.id);
+    expect(row.refId).toBe(groupRef(bob.id, 'shared-1'));
+    expect(dbFindByRef(`group:${gid}`, groupRef(bob.id, 'shared-1'))?.id).toBe(row.id);
     expect(dbFindByRef(`group:${gid}`, 'nope')).toBeNull();
+  });
+
+  it('ignores groupMessageId on a 1:1 message', async () => {
+    await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'spoof', groupMessageId: 'victim-ref'}});
+    await settle();
+    const row = dbGetConversation(bob.id).at(-1)!;
+    expect(row.text).toBe('spoof');
+    expect(row.refId).toBe(row.id);
+    expect(dbFindByRef(bob.id, 'victim-ref')).toBeNull();
+  });
+
+  it("can't take over another sender's group ref, even by sending first", async () => {
+    const carol = await keypair();
+    const conv = 'group:g-spoof';
+    dbInsertMessage({
+      id: 'carol-row', refId: groupRef(carol.id, 'shared-x'), conversationId: conv, senderId: carol.id, recipientId: me.id,
+      kind: 'text', text: 'carol original', status: 'delivered', isOutbound: false, createdAt: Date.now(),
+    });
+    const group = {id: 'g-spoof', name: 'Spoof', members: [bob.id, me.id]};
+    await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'spoof', group, groupMessageId: 'shared-x'}});
+    await settle();
+    const spoof = dbGetConversation(conv).find(m => m.text === 'spoof')!;
+    expect(spoof.refId).toBe(groupRef(bob.id, 'shared-x'));
+    expect(dbFindByRef(conv, groupRef(carol.id, 'shared-x'))?.text).toBe('carol original');
+    // Claiming Carol's full ref still lands under Bob's own id.
+    await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'spoof2', group, groupMessageId: groupRef(carol.id, 'shared-x')}});
+    await settle();
+    expect(dbFindByRef(conv, groupRef(carol.id, 'shared-x'))?.text).toBe('carol original');
   });
 
   it('delivers a 1:1 reply with replyTo intact', async () => {
@@ -234,7 +262,7 @@ describe('meshService with a peer phone', () => {
     const id = await useMeshService.getState().sendToConversation(conversationId, {kind: 'text', text: 'gr', replyTo});
     await settle();
     expect(bobInbox.at(-1)!.c.replyTo).toEqual(replyTo);
-    expect(dbFindByRef(conversationId, id)!.replyTo).toEqual(replyTo);
+    expect(dbFindByRef(conversationId, groupRef(me.id, id))!.replyTo).toEqual(replyTo);
     // Carol is unreachable: her copy sits in the carry store with replyTo inside the content.
     expect(dbGetConversation(conversationId).find(m => m.id === id)!.replyTo).toEqual(replyTo);
   });
@@ -340,6 +368,52 @@ describe('meshService with a peer phone', () => {
       useMeshService.getState().deleteConversation(conversationId);
       expect(dbReactionsFor(conversationId)).toEqual({});
       expect(useMessagesStore.getState().reactions[conversationId]).toBeUndefined();
+    });
+  });
+
+  describe('reaction cleanup', () => {
+    const msg = (id: string, conversationId: string) =>
+      dbInsertMessage({
+        id, refId: id, conversationId, senderId: 'x', recipientId: me.id, kind: 'text', text: 't',
+        status: 'delivered', isOutbound: false, createdAt: Date.now(),
+      });
+
+    it('deleting a message deletes its reactions only', () => {
+      msg('del-1', 'c-del');
+      msg('keep-1', 'c-del');
+      dbSetReaction('c-del', 'del-1', 'a', '👍', 1000);
+      dbSetReaction('c-del', 'keep-1', 'a', '👍', 1000);
+      dbSetReaction('c-other', 'del-1', 'a', '👍', 1000);
+      dbDeleteMessage('del-1');
+      expect(dbReactionsFor('c-del')['del-1']).toBeUndefined();
+      expect(dbReactionsFor('c-del')['keep-1']).toHaveLength(1);
+      expect(dbReactionsFor('c-other')['del-1']).toHaveLength(1);
+    });
+
+    it('prunes old reactions and tombstones with no message, keeping the rest', () => {
+      const now = Date.now();
+      const old = now - MESSAGE_TTL_MS - 1000;
+      msg('live-1', 'c-prune');
+      dbSetReaction('c-prune', 'gone', 'a', '👍', old);
+      dbSetReaction('c-prune', 'gone', 'b', '', old); // tombstone
+      dbSetReaction('c-prune', 'live-1', 'a', '👍', old); // message exists
+      dbSetReaction('c-prune', 'early', 'a', '👍', now); // recent, message may still come
+      dbSetReaction('c-prune2', 'live-1', 'a', '👍', old); // same ref, other conversation
+      dbPruneOrphanReactions(now);
+      const r = dbReactionsFor('c-prune');
+      expect(r.gone).toBeUndefined();
+      expect(r['live-1']).toHaveLength(1);
+      expect(r.early).toHaveLength(1);
+      expect(dbReactionsFor('c-prune2')).toEqual({});
+      dbSetReaction('c-prune', 'gone', 'b', '😂', old + 1); // tombstone really gone: nothing blocks this
+      expect(dbReactionsFor('c-prune').gone).toHaveLength(1);
+    });
+
+    it('keys reactions per conversation', () => {
+      dbSetReaction('c-k1', 'same', 'a', '👍', 1000);
+      dbSetReaction('c-k2', 'same', 'a', '❤️', 1000);
+      expect(dbReactionsFor('c-k1').same).toEqual([{emoji: '👍', reactorId: 'a'}]);
+      expect(dbReactionsFor('c-k2').same).toEqual([{emoji: '❤️', reactorId: 'a'}]);
     });
   });
 

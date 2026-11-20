@@ -35,18 +35,30 @@ describe('resolveQuote', () => {
       name: 'Bob',
       snippet: 'the real text',
       targetId: 'local-1',
+      unverified: false,
     });
   });
-  it('falls back to the claimed values when the original is absent', () => {
-    expect(resolveQuote(claim, [], 'me', nameOf)).toEqual({
-      name: 'name-mallory',
+  it('looks the original up when it is not loaded, keeping targetId null', () => {
+    expect(resolveQuote(claim, [], 'me', nameOf, ref => (ref === 'ref-1' ? orig : null))).toEqual({
+      name: 'Bob',
+      snippet: 'the real text',
+      targetId: null,
+      unverified: false,
+    });
+  });
+  it('marks an unfound original as unverified', () => {
+    expect(resolveQuote(claim, [], 'me', nameOf, () => null)).toEqual({
+      name: 'name-mallory · not on this phone',
       snippet: 'forged',
       targetId: null,
+      unverified: true,
     });
   });
-  it('shows You for your own message', () => {
+  it('shows You only for a real own message, never for a claimed self sender', () => {
     const mine = {...orig, senderId: 'me', isOutbound: true};
     expect(resolveQuote(claim, [mine], 'me', nameOf).name).toBe('You');
-    expect(resolveQuote({...claim, senderId: 'me'}, [], 'me', nameOf).name).toBe('You');
+    const faked = resolveQuote({...claim, senderId: 'me'}, [], 'me', nameOf, () => null);
+    expect(faked.name).toBe('Someone · not on this phone');
+    expect(faked.unverified).toBe(true);
   });
 });

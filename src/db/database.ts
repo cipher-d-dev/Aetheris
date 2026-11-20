@@ -55,6 +55,19 @@ export async function initDatabase(): Promise<void> {
   run('DELETE FROM seen_message_ids WHERE seen_at < ?', [Date.now() - SEEN_RETENTION_MS]);
   run('DELETE FROM carried_messages WHERE expires_at < ?', [Date.now()]);
   dbExpireOverdueOutbound(Date.now());
+  dbPruneOrphanReactions(Date.now());
+}
+
+/**
+ * Startup sweep. Reactions may arrive before their message, but not forever: drop
+ * old ones (removal tombstones included) whose message never showed up in that conversation.
+ */
+export function dbPruneOrphanReactions(now: number): void {
+  run(
+    `DELETE FROM reactions WHERE created_at < ? AND NOT EXISTS (
+       SELECT 1 FROM messages m WHERE m.conversation_id = reactions.conversation_id AND m.ref_id = reactions.message_ref)`,
+    [now - MESSAGE_TTL_MS],
+  );
 }
 
 function ensureColumn(table: string, column: string, definition: string): void {
@@ -204,8 +217,23 @@ export function dbListConversations(): ConversationRow[] {
 }
 
 export function dbFindByRef(conversationId: string, refId: string): MessageRow | null {
-  const r = rows('SELECT * FROM messages WHERE conversation_id = ? AND ref_id = ? LIMIT 1', [conversationId, refId])[0];
+  // Earliest-inserted row wins, so a later message can't take over a ref.
+  const r = rows(
+    'SELECT * FROM messages WHERE conversation_id = ? AND ref_id = ? ORDER BY rowid ASC LIMIT 1',
+    [conversationId, refId],
+  )[0];
   return r ? rowToMessage(r) : null;
+}
+
+/** True if a message from someone other than senderId already uses this ref in the conversation. */
+export function dbRefUsedByOther(conversationId: string, refId: string, senderId: string): boolean {
+  return (
+    rows('SELECT 1 AS x FROM messages WHERE conversation_id = ? AND ref_id = ? AND sender_id != ? LIMIT 1', [
+      conversationId,
+      refId,
+      senderId,
+    ]).length > 0
+  );
 }
 
 export function dbGetMessage(id: string): MessageRow | null {
@@ -217,7 +245,11 @@ export function dbGetMessage(id: string): MessageRow | null {
 export function dbDeleteMessage(id: string): string[] {
   const subs = rows('SELECT sub_id FROM group_deliveries WHERE message_id = ?', [id]).map(r => r.sub_id);
   run('DELETE FROM group_deliveries WHERE message_id = ?', [id]);
+  const row = rows('SELECT conversation_id, ref_id FROM messages WHERE id = ?', [id])[0];
   run('DELETE FROM messages WHERE id = ?', [id]);
+  if (row?.ref_id) {
+    run('DELETE FROM reactions WHERE conversation_id = ? AND message_ref = ?', [row.conversation_id, row.ref_id]);
+  }
   return subs;
 }
 
@@ -261,8 +293,8 @@ export function dbSetReaction(
   run(
     `INSERT INTO reactions (message_ref, conversation_id, reactor_id, emoji, created_at)
      VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(message_ref, reactor_id) DO UPDATE SET
-       conversation_id = excluded.conversation_id, emoji = excluded.emoji, created_at = excluded.created_at
+     ON CONFLICT(conversation_id, message_ref, reactor_id) DO UPDATE SET
+       emoji = excluded.emoji, created_at = excluded.created_at
      WHERE excluded.created_at >= reactions.created_at`,
     [messageRef, conversationId, reactorId, emoji, createdAt],
   );
