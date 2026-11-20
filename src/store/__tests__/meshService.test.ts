@@ -29,7 +29,7 @@ import initSqlJs from 'sql.js';
 import sodium from 'react-native-sodium';
 import {Buffer} from 'buffer';
 import {AetherisBridge} from '../../native/AetherisBridge';
-import {initDatabase, dbGetConversation, dbGetGroup} from '../../db/database';
+import {initDatabase, dbGetConversation, dbGetGroup, dbListConversations} from '../../db/database';
 import {useMeshService} from '../meshService';
 import {displayName, useMessagesStore} from '../messagesStore';
 import {
@@ -133,6 +133,28 @@ describe('meshService with a peer phone', () => {
     expect(bridge.showMessageNotification).toHaveBeenCalledWith(bob.id, 'Bob', 'hi from bob');
   });
 
+  it('stamps arrival time and moves a late message to the top of the chat list', async () => {
+    const carl = await keypair();
+    const svc = useMeshService.getState();
+    await svc.sendToConversation(carl.id, {kind: 'text', text: 'newer outbound'});
+    expect(useMessagesStore.getState().conversations[0].id).toBe(carl.id);
+
+    const origin = Date.now() - 3 * 3600000;
+    const before = Date.now();
+    await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'late news', alias: 'Bob'}});
+    // Backdate by rewriting the row the way an old origin timestamp would store it.
+    await settle();
+    const row = dbGetConversation(bob.id).at(-1)!;
+    expect(row.receivedAt).toBeGreaterThanOrEqual(before);
+    mockState.db.run('UPDATE messages SET created_at = ? WHERE id = ?', [origin, row.id]);
+
+    const list = dbListConversations();
+    expect(list[0]).toMatchObject({id: bob.id, lastText: 'late news'});
+    expect(list[0].lastTime).toBe(row.receivedAt);
+    expect(dbGetConversation(bob.id).at(0)!.createdAt).toBeLessThanOrEqual(origin);
+    svc.deleteConversation(carl.id);
+  });
+
   it('fans group messages out per member and counts delivery receipts', async () => {
     const carol = await keypair(); // not reachable: her copy is carried
     const conversationId = useMeshService.getState().createGroup('Camp', [bob.id, carol.id]);
@@ -220,6 +242,25 @@ describe('meshService with a peer phone', () => {
     expect(conv.map(m => m.text)).toEqual(['second try']);
     expect(conv[0].id).not.toBe(id2);
     expect(conv[0].status).not.toBe('failed'); // queued again (and sprayed to Bob)
+  });
+
+  it('a retry that cannot send keeps the failed message', async () => {
+    const erin = await keypair();
+    const id = await useMeshService.getState().sendToConversation(erin.id, {kind: 'text', text: 'keep me'});
+    dbUpdateMessageStatus(id, 'failed');
+    const realSend = useMeshService.getState().sendToConversation;
+    useMeshService.setState({
+      sendToConversation: async () => {
+        throw new Error('Mesh is not running yet');
+      },
+    });
+    try {
+      await expect(useMeshService.getState().retryMessage(id)).rejects.toThrow('Mesh is not running yet');
+    } finally {
+      useMeshService.setState({sendToConversation: realSend});
+    }
+    const conv = dbGetConversation(erin.id);
+    expect(conv.map(m => [m.id, m.text, m.status])).toEqual([[id, 'keep me', 'failed']]);
   });
 
   it('deleting a chat stops delivery of its pending messages', async () => {

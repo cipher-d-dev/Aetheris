@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -261,6 +263,19 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
     fun stopAudio(promise: Promise) {
         media.stopPlayback()
         promise.resolve(null)
+    }
+
+    // ─── Clipboard ─────────────────────────────────────────────────────────
+
+    @ReactMethod
+    fun copyText(text: String, promise: Promise) {
+        try {
+            val clipboard = reactContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Message", text))
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("COPY_FAILED", e.message ?: "Could not copy", e)
+        }
     }
 
     // ─── Notifications ─────────────────────────────────────────────────────

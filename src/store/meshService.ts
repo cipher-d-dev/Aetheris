@@ -10,6 +10,7 @@
  */
 import {create} from 'zustand';
 import {AppState, EmitterSubscription} from 'react-native';
+import {useDraftsStore} from './draftsStore';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {MeshConfig, MeshNode} from '../mesh/meshNode';
 import {createRnCrypto} from '../mesh/rnCrypto';
@@ -254,6 +255,7 @@ export const useMeshService = create<MeshState>((set, get) => {
       isOutbound: false,
       route: m.routing.hops,
       createdAt: Math.min(m.routing.originTimestamp, Date.now()),
+      receivedAt: Date.now(),
       expiresAt: m.routing.expiresAt,
       read: visible,
     });
@@ -506,17 +508,20 @@ export const useMeshService = create<MeshState>((set, get) => {
       }
       set({carrying: node?.carryCount() ?? 0, carryingForOthers: node?.carryForOthersCount() ?? 0});
       useMessagesStore.getState().dropConversation(conversationId);
+      useDraftsStore.getState().clearDraft(conversationId);
     },
 
     retryMessage: async (messageId: string) => {
       const m = dbGetMessage(messageId);
       if (!m || !m.isOutbound) return;
-      get().deleteMessage(messageId);
+      // Queue the new copy first: if sending throws (mesh not running), the
+      // failed message stays so nothing is lost.
       await get().sendToConversation(m.conversationId, {
         kind: m.kind,
         text: m.text || undefined,
         media: m.media,
       });
+      get().deleteMessage(messageId);
     },
 
     createGroup: (name: string, memberIds: string[]) => {

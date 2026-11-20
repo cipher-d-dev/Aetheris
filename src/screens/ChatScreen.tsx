@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -14,6 +14,7 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -29,13 +30,17 @@ import {
 import {MAX_MEDIA_BASE64, useMeshService} from '../store/meshService';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
-import {dbGetGroup, dbGroupDeliveries} from '../db/database';
+import {dbFirstUnread, dbGetGroup, dbGroupDeliveries} from '../db/database';
+import {useDraftsStore} from '../store/draftsStore';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
 import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
+import MessageMenu, {MessageMenuAction} from '../ui/MessageMenu';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
+import {buildItems, findArrivalsAbove} from '../ui/chatItems';
+import {isLate, lateAccessibilityLabel, lateLabel} from '../ui/late';
 import {formatClock, isNearby, presenceText} from '../ui/presence';
 import {routeText} from '../ui/route';
 
@@ -106,6 +111,7 @@ function Bubble({
   onImage,
   onLongPress,
   onStatus,
+  highlight,
 }: {
   m: ChatMessage;
   first: boolean;
@@ -116,6 +122,7 @@ function Bubble({
   onImage: (uri: string) => void;
   onLongPress: () => void;
   onStatus: () => void;
+  highlight: boolean;
 }) {
   const {theme: t} = useThemeStore();
   const out = m.isOutbound;
@@ -134,13 +141,27 @@ function Bubble({
 
   const timeAndTicks = (
     <View style={styles.meta}>
-      <Text style={[styles.metaText, {color: meta}]}>{formatClock(m.createdAt)}</Text>
+      {isLate(m) ? (
+        <Text
+          accessibilityLabel={lateAccessibilityLabel(m)}
+          style={[styles.metaText, styles.lateText, {color: meta}]}>
+          {lateLabel(m)}
+        </Text>
+      ) : (
+        <Text style={[styles.metaText, {color: meta}]}>{formatClock(m.createdAt)}</Text>
+      )}
       {out && <Ticks m={m} color={meta} onPress={onStatus} />}
     </View>
   );
 
   return (
-    <View style={[styles.row, out ? styles.rowOut : styles.rowIn, last && {marginBottom: 6}]}>
+    <View
+      style={[
+        styles.row,
+        out ? styles.rowOut : styles.rowIn,
+        last && {marginBottom: 6},
+        highlight && {backgroundColor: t.primarySoft},
+      ]}>
       <Pressable
         {...(m.kind === 'audio' && {
           accessibilityRole: 'button' as const,
@@ -199,23 +220,63 @@ export default function ChatScreen() {
   const isGroup = isGroupConversation(conversationId);
   const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? '');
 
-  const messages = useMessagesStore(s => s.messages[conversationId]) ?? [];
+  const stored = useMessagesStore(s => s.messages[conversationId]);
+  const messages = useMemo(() => stored ?? [], [stored]);
+  const anchor = useMessagesStore(s => s.unreadAnchor);
   const {loadMessages, setActiveConversation} = useMessagesStore.getState();
   const {sendToConversation, routes, status, deleteMessage, retryMessage} = useMeshService();
 
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(() => useDraftsStore.getState().drafts[conversationId] ?? '');
+  const changeInput = (text: string) => {
+    setInput(text);
+    useDraftsStore.getState().setDraft(conversationId, text);
+  };
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [recordingSince, setRecordingSince] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [aboveId, setAboveId] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [menuFor, setMenuFor] = useState<ChatMessage | null>(null);
   const listRef = useRef<FlatList>(null);
-  const nearBottom = useRef(true);
+  // Known before the first render (nothing is marked read yet), so a chat that
+  // opens at the unread divider never starts heading for the bottom.
+  const [opensAtDivider] = useState(() => dbFirstUnread(conversationId) !== null);
+  const nearBottom = useRef(!opensAtDivider);
   const forceStick = useRef(false);
   const lastSeenId = useRef<string | undefined>(undefined);
+  // Ids already shown; null until the first non-empty load has been recorded.
+  const seenIds = useRef<Set<string> | null>(null);
   const lastOffset = useRef(0);
+  // While true, every layout change re-pins the divider: the first screens of
+  // messages render in batches. Ends when the user drags or after a moment.
+  const pendingAnchorScroll = useRef(opensAtDivider);
+  const pinTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scrollRetries = useRef({left: 0});
+
+  const pinnedDivider = useRef(false);
+  const lastView = useRef<{y: number; height: number; contentHeight: number} | null>(null);
+  useEffect(() => {
+    if (!opensAtDivider) return;
+    pinTimer.current = setTimeout(() => {
+      pendingAnchorScroll.current = false;
+      if (pinnedDivider.current) {
+        // Scroll events during pinning were ignored; take the real position now.
+        const v = lastView.current;
+        nearBottom.current = v ? v.contentHeight - (v.y + v.height) < 80 : false;
+      } else {
+        // The first unread message wasn't among the loaded ones: open at the bottom.
+        nearBottom.current = true;
+        scrollToBottomRef.current(false);
+      }
+    }, 1000);
+    return () => clearTimeout(pinTimer.current);
+  }, [opensAtDivider]);
 
   useEffect(() => {
     loadMessages(conversationId);
@@ -249,6 +310,10 @@ export default function ChatScreen() {
         .join(', ')
     : presenceText(conversationId, routes);
 
+  const unreadAnchor = anchor?.conversationId === conversationId ? anchor : null;
+  const items = buildItems(messages, isGroup, unreadAnchor?.id);
+  const dividerIndex = items.findIndex(i => i.type === 'unread');
+
   const last = messages[messages.length - 1];
   const lastId = last?.id;
   const lastInbound = last ? !last.isOutbound : false;
@@ -258,9 +323,32 @@ export default function ChatScreen() {
     if (lastInbound && !nearBottom.current) setShowNew(true);
   }, [lastId, lastInbound]);
 
+  useEffect(() => {
+    if (messages.length === 0) return;
+    // The first load is the baseline; the unread divider covers those messages.
+    const arrivals =
+      seenIds.current && !pendingAnchorScroll.current ? findArrivalsAbove(seenIds.current, messages) : [];
+    seenIds.current = new Set(messages.map(m => m.id));
+    if (arrivals.length === 0) return;
+    const first = messages.findIndex(m => m.id === arrivals[0]);
+    setAboveId(prev => {
+      const prevIndex = prev ? messages.findIndex(m => m.id === prev) : -1;
+      return prevIndex >= 0 && prevIndex < first ? prev : arrivals[0];
+    });
+  }, [messages]);
+
+  useEffect(() => () => clearTimeout(highlightTimer.current), []);
+  useEffect(() => () => useDraftsStore.getState().flushDrafts(), []);
+
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const {contentOffset, layoutMeasurement, contentSize} = e.nativeEvent;
     const y = contentOffset.y;
+    lastView.current = {y, height: layoutMeasurement.height, contentHeight: contentSize.height};
+    // While the divider is being pinned, these are our own interim jumps.
+    if (pendingAnchorScroll.current) {
+      lastOffset.current = y;
+      return;
+    }
     if (contentSize.height - (y + layoutMeasurement.height) < 80) {
       nearBottom.current = true;
       setShowNew(false);
@@ -280,13 +368,55 @@ export default function ChatScreen() {
     const scrollView = listRef.current?.getNativeScrollRef() as ScrollView | null | undefined;
     scrollView?.scrollToEnd({animated});
   };
+  const scrollToBottomRef = useRef(scrollToBottom);
+  scrollToBottomRef.current = scrollToBottom;
+
+  const scrollToIndex = (index: number) => {
+    scrollRetries.current.left = 3;
+    nearBottom.current = false;
+    listRef.current?.scrollToIndex({index, viewPosition: 0, animated: false});
+  };
+
+  /** Scroll so the message sits at the top of the list, optionally tinting it for a moment. */
+  const scrollToMessage = (id: string, opts?: {highlight?: boolean}) => {
+    const index = items.findIndex(i => i.type === 'msg' && i.key === id);
+    if (index < 0) return;
+    scrollToIndex(index);
+    if (opts?.highlight) {
+      setHighlightId(id);
+      clearTimeout(highlightTimer.current);
+      highlightTimer.current = setTimeout(() => setHighlightId(null), 1500);
+    }
+  };
+
+  // Items are not measured up front: jump near the target, then retry once it has been laid out.
+  const onScrollToIndexFailed = (info: {index: number; averageItemLength: number}) => {
+    if (scrollRetries.current.left <= 0) return;
+    scrollRetries.current.left -= 1;
+    listRef.current?.scrollToOffset({offset: info.averageItemLength * info.index, animated: false});
+    setTimeout(
+      () => listRef.current?.scrollToIndex({index: info.index, viewPosition: 0, animated: false}),
+      100,
+    );
+  };
 
   const onContentSizeChange = () => {
+    if (pendingAnchorScroll.current && dividerIndex >= 0) {
+      pinnedDivider.current = true;
+      scrollToIndex(dividerIndex);
+      return;
+    }
+    if (pendingAnchorScroll.current) return; // divider not in the list yet
     if (nearBottom.current || forceStick.current) {
       scrollToBottom(false);
       nearBottom.current = true;
       forceStick.current = false;
     }
+  };
+
+  const jumpToAbove = () => {
+    if (aboveId) scrollToMessage(aboveId, {highlight: true});
+    setAboveId(null);
   };
 
   const jumpToNew = () => {
@@ -299,20 +429,32 @@ export default function ChatScreen() {
     setError('');
     if (status !== 'running') {
       setError("Can't send yet — Aetheris is still starting. Check Bluetooth is on.");
-      return;
+      return false;
     }
     try {
       await sendToConversation(conversationId, content);
+      return true;
     } catch (e: any) {
       setError(e?.message ?? 'Could not send');
+      return false;
     }
+  };
+
+  // The draft stays stored while a send is in flight: drop it once the send
+  // worked, or put the text back if it failed. Skipped if the user has typed
+  // something new meanwhile.
+  const settleDraft = (ok: boolean, sent: string) => {
+    const {drafts, clearDraft} = useDraftsStore.getState();
+    if ((drafts[conversationId] ?? '') !== sent) return;
+    if (ok) clearDraft(conversationId);
+    else setInput(cur => cur || sent);
   };
 
   const sendText = () => {
     const text = input.trim();
     if (!text) return;
     setInput('');
-    send({kind: 'text', text});
+    send({kind: 'text', text}).then(ok => settleDraft(ok, text));
   };
 
   const attachPhoto = async () => {
@@ -326,11 +468,12 @@ export default function ChatScreen() {
       }
       const caption = input.trim();
       setInput('');
-      await send({
+      const ok = await send({
         kind: 'image',
         text: caption || undefined,
         media: {mime: img.mime, data: img.data, width: img.width, height: img.height},
       });
+      settleDraft(ok, caption);
     } catch (e: any) {
       setError(e?.message ?? 'Could not attach photo');
     } finally {
@@ -413,48 +556,52 @@ export default function ChatScreen() {
     Alert.alert(statusLabel(m.status), text ?? delivered);
   };
 
-  const menu = (m: ChatMessage) => {
-    const del = {
-      text: 'Delete',
-      style: 'destructive' as const,
+  const copyMessage = (text: string) => {
+    if (typeof AetherisBridge.copyText !== 'function') {
+      setError("Couldn't copy");
+      return;
+    }
+    AetherisBridge.copyText(text).then(
+      () => {
+        // Android 13+ shows its own clipboard confirmation.
+        if (Number(Platform.Version) >= 33) return;
+        setNotice('Copied');
+      },
+      () => setError("Couldn't copy"),
+    );
+  };
+
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(''), 2000);
+    return () => clearTimeout(id);
+  }, [notice]);
+
+  const menuActions = (m: ChatMessage): MessageMenuAction[] => {
+    const actions: MessageMenuAction[] = [];
+    if (m.isOutbound && m.status === 'failed')
+      actions.push({
+        key: 'retry',
+        label: 'Try again',
+        icon: 'refresh-outline',
+        onPress: () => retryMessage(m.id).catch(e => setError(String(e?.message ?? e))),
+      });
+    if (m.text)
+      actions.push({key: 'copy', label: 'Copy', icon: 'copy-outline', onPress: () => copyMessage(m.text)});
+    actions.push({key: 'info', label: 'Info', icon: 'information-circle-outline', onPress: () => info(m)});
+    actions.push({
+      key: 'delete',
+      label: 'Delete',
+      icon: 'trash-outline',
+      destructive: true,
       onPress: () =>
         Alert.alert('Delete message?', 'It will be removed from this phone.', [
           {text: 'Cancel', style: 'cancel'},
           {text: 'Delete', style: 'destructive', onPress: () => deleteMessage(m.id)},
         ]),
-    };
-    if (m.isOutbound && m.status === 'failed') {
-      Alert.alert('Not delivered', undefined, [
-        {text: 'Cancel', style: 'cancel'},
-        del,
-        {text: 'Try again', onPress: () => retryMessage(m.id).catch(e => setError(String(e?.message ?? e)))},
-      ]);
-      return;
-    }
-    Alert.alert('Message', undefined, [
-      {text: 'Cancel', style: 'cancel'},
-      del,
-      {text: 'Info', onPress: () => info(m)},
-    ]);
+    });
+    return actions;
   };
-
-  type Item =
-    | {type: 'day'; key: string; ts: number}
-    | {type: 'msg'; key: string; m: ChatMessage; first: boolean; last: boolean; showSender: boolean};
-  const items: Item[] = [];
-  messages.forEach((m, i) => {
-    const prev = messages[i - 1];
-    const next = messages[i + 1];
-    const newDay = !prev || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString();
-    if (newDay) items.push({type: 'day', key: `day-${m.id}`, ts: m.createdAt});
-    const sameAsPrev = !newDay && prev && prev.senderId === m.senderId && m.createdAt - prev.createdAt < 120000;
-    const sameAsNext =
-      next &&
-      next.senderId === m.senderId &&
-      next.createdAt - m.createdAt < 120000 &&
-      new Date(next.createdAt).toDateString() === new Date(m.createdAt).toDateString();
-    items.push({type: 'msg', key: m.id, m, first: !sameAsPrev, last: !sameAsNext, showSender: isGroup && !sameAsPrev});
-  });
 
   const recording = recordingSince !== null;
 
@@ -485,7 +632,9 @@ export default function ChatScreen() {
         keyExtractor={i => i.key}
         contentContainerStyle={styles.list}
         onContentSizeChange={onContentSizeChange}
+        onScrollToIndexFailed={onScrollToIndexFailed}
         onScroll={onScroll}
+        onScrollBeginDrag={() => (pendingAnchorScroll.current = false)}
         scrollEventThrottle={16}
         ListHeaderComponent={
           <View style={[styles.notice, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
@@ -497,7 +646,13 @@ export default function ChatScreen() {
           </View>
         }
         renderItem={({item}) =>
-          item.type === 'day' ? (
+          item.type === 'unread' ? (
+            <View style={styles.dayWrap}>
+              <Text style={[styles.day, {color: t.textSub, backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
+                {unreadAnchor?.count === 1 ? '1 unread message' : `${unreadAnchor?.count} unread messages`}
+              </Text>
+            </View>
+          ) : item.type === 'day' ? (
             <View style={styles.dayWrap}>
               <Text style={[styles.day, {color: t.textSub, backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
                 {dayLabel(item.ts)}
@@ -509,23 +664,26 @@ export default function ChatScreen() {
               first={item.first}
               last={item.last}
               showSender={item.showSender}
+              highlight={highlightId === item.m.id}
               playing={playingId === item.m.id}
               onPlay={() => play(item.m)}
               onImage={setViewer}
-              onLongPress={() => menu(item.m)}
+              onLongPress={() => setMenuFor(item.m)}
               onStatus={() => statusInfo(item.m)}
             />
           )
         }
       />
-      {showNew && (
+      {(aboveId || showNew) && (
         <Pressable
-          onPress={jumpToNew}
+          onPress={aboveId ? jumpToAbove : jumpToNew}
           accessibilityRole="button"
-          accessibilityLabel="Scroll to new messages"
+          accessibilityLabel={aboveId ? 'New message above, jump to it' : 'Scroll to new messages'}
           style={[styles.newPill, {backgroundColor: t.surface}]}>
-          <Icon name="arrow-down" size={14} color={t.primary} />
-          <Text style={[styles.newPillText, {color: t.text}]}>New messages</Text>
+          <Icon name={aboveId ? 'arrow-up' : 'arrow-down'} size={14} color={t.primary} />
+          <Text style={[styles.newPillText, {color: t.text}]}>
+            {aboveId ? 'New message above' : 'New messages'}
+          </Text>
         </Pressable>
       )}
       </View>
@@ -544,6 +702,12 @@ export default function ChatScreen() {
           <Text style={[styles.errorText, {color: t.danger}]}>{error}</Text>
           <Icon name="close" size={16} color={t.danger} />
         </Pressable>
+      )}
+
+      {notice !== '' && (
+        <View style={[styles.error, {backgroundColor: t.surfaceAlt}]}>
+          <Text style={[styles.errorText, {color: t.textSub}]}>{notice}</Text>
+        </View>
       )}
 
       {/* Composer */}
@@ -566,7 +730,7 @@ export default function ChatScreen() {
                 placeholder="Message"
                 placeholderTextColor={t.textMuted}
                 value={input}
-                onChangeText={setInput}
+                onChangeText={changeInput}
                 multiline
                 maxLength={4000}
               />
@@ -585,6 +749,12 @@ export default function ChatScreen() {
         )}
       </View>
 
+      <MessageMenu
+        visible={menuFor !== null}
+        onClose={() => setMenuFor(null)}
+        actions={menuFor ? menuActions(menuFor) : []}
+        preview={menuFor ? menuFor.text || (menuFor.kind === 'image' ? 'Photo' : menuFor.kind === 'audio' ? 'Voice message' : undefined) : undefined}
+      />
       <Modal visible={viewer !== null} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
         <Pressable style={styles.viewer} onPress={() => setViewer(null)} accessible={false}>
           {viewer && (
@@ -634,6 +804,7 @@ const styles = StyleSheet.create({
   metaOnImage: {right: 10, bottom: 8, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1},
   meta: {flexDirection: 'row', alignItems: 'center', gap: 3},
   metaText: {fontFamily: Font.medium, fontSize: 11},
+  lateText: {flexShrink: 1},
   audio: {flexDirection: 'row', alignItems: 'center', gap: 10, width: 230, paddingBottom: 14},
   playButton: {width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center'},
   wave: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 28},

@@ -44,6 +44,7 @@ export async function initDatabase(): Promise<void> {
   ensureColumn('peers', 'verified', 'INTEGER DEFAULT 0');
   ensureColumn('peers', 'nickname', 'TEXT');
   ensureColumn('group_deliveries', 'expired', 'INTEGER DEFAULT 0');
+  ensureColumn('messages', 'received_at', 'INTEGER');
 
   run('DELETE FROM seen_message_ids WHERE seen_at < ?', [Date.now() - SEEN_RETENTION_MS]);
   run('DELETE FROM carried_messages WHERE expires_at < ?', [Date.now()]);
@@ -68,6 +69,14 @@ export function dbSetSetting(key: string, value: string): void {
   );
 }
 
+export function dbListSettings(prefix: string): {key: string; value: string}[] {
+  return rows("SELECT key, value FROM settings WHERE substr(key, 1, ?) = ?", [prefix.length, prefix]);
+}
+
+export function dbDeleteSetting(key: string): void {
+  run('DELETE FROM settings WHERE key = ?', [key]);
+}
+
 // ─── Messages ────────────────────────────────────────────────────────────────
 
 export interface MessageRow {
@@ -83,6 +92,8 @@ export interface MessageRow {
   isOutbound: boolean;
   route?: string[];
   createdAt: number;
+  /** When an inbound message reached this phone. Unset means the same as createdAt. */
+  receivedAt?: number;
   expiresAt?: number;
 }
 
@@ -90,8 +101,8 @@ export function dbInsertMessage(m: MessageRow & {read?: boolean}): void {
   run(
     `INSERT OR IGNORE INTO messages
        (id, conversation_id, sender_id, recipient_id, sender_alias, kind, text, media,
-        status, is_outbound, route, created_at, expires_at, read)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status, is_outbound, route, created_at, received_at, expires_at, read)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       m.id,
       m.conversationId,
@@ -105,6 +116,7 @@ export function dbInsertMessage(m: MessageRow & {read?: boolean}): void {
       m.isOutbound ? 1 : 0,
       m.route ? JSON.stringify(m.route) : null,
       m.createdAt,
+      m.receivedAt ?? null,
       m.expiresAt ?? null,
       m.read === false ? 0 : 1,
     ],
@@ -136,6 +148,17 @@ export function dbMarkConversationRead(conversationId: string): void {
   run('UPDATE messages SET read = 1 WHERE conversation_id = ?', [conversationId]);
 }
 
+/** The earliest unread inbound message (by created_at, so late arrivals count) and how many are unread. */
+export function dbFirstUnread(conversationId: string): {id: string; count: number} | null {
+  const r = rows(
+    `SELECT id, (SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND is_outbound = 0 AND read = 0) AS n
+     FROM messages WHERE conversation_id = ? AND is_outbound = 0 AND read = 0
+     ORDER BY created_at ASC LIMIT 1`,
+    [conversationId, conversationId],
+  )[0];
+  return r ? {id: r.id, count: r.n} : null;
+}
+
 export interface ConversationRow {
   id: string;
   /** Status of the last message if we sent it (for ticks in the list) */
@@ -149,13 +172,13 @@ export interface ConversationRow {
 export function dbListConversations(): ConversationRow[] {
   return rows(
     `SELECT m.conversation_id AS id, m.text AS last_text, m.kind AS last_kind,
-            m.created_at AS last_time, m.is_outbound AS last_out, m.status AS last_status,
+            COALESCE(m.received_at, m.created_at) AS last_time, m.is_outbound AS last_out, m.status AS last_status,
             (SELECT COUNT(*) FROM messages u WHERE u.conversation_id = m.conversation_id AND u.read = 0) AS unread
        FROM messages m
-       JOIN (SELECT conversation_id, MAX(created_at) AS t FROM messages GROUP BY conversation_id) latest
-         ON latest.conversation_id = m.conversation_id AND latest.t = m.created_at
+       JOIN (SELECT conversation_id, MAX(COALESCE(received_at, created_at)) AS t FROM messages GROUP BY conversation_id) latest
+         ON latest.conversation_id = m.conversation_id AND latest.t = COALESCE(m.received_at, m.created_at)
       GROUP BY m.conversation_id
-      ORDER BY m.created_at DESC`,
+      ORDER BY last_time DESC`,
   ).map(r => ({
     id: r.id,
     lastOutboundStatus: r.last_out === 1 ? (r.last_status as MessageStatus) : undefined,
@@ -219,6 +242,7 @@ function rowToMessage(r: any): MessageRow {
     isOutbound: r.is_outbound === 1,
     route: r.route ? safeJson(r.route) : undefined,
     createdAt: r.created_at,
+    receivedAt: r.received_at ?? undefined,
     expiresAt: r.expires_at ?? undefined,
   };
 }
