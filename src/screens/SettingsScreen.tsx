@@ -1,6 +1,6 @@
 import React, {useState} from 'react';
 import {View, Text, StyleSheet, ScrollView, Pressable, Modal, TextInput, Share} from 'react-native';
-import {Font, ThemeMode, Type, useThemeStore} from '../theme';
+import {ACCENTS, AccentName, Font, ThemeMode, Type, useThemeStore} from '../theme';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {POWER_PROFILES, PowerMode, useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
@@ -9,10 +9,10 @@ import {formatLogTime, getLogLines} from '../utils/logBuffer';
 import Avatar from '../ui/Avatar';
 import ListRow, {Section} from '../ui/ListRow';
 import OptionSheet from '../ui/OptionSheet';
-import Logo from '../ui/Logo';
+import ColorSheet from '../ui/ColorSheet';
+import AboutSheet from '../ui/AboutSheet';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {useAvatarStore} from '../store/avatarStore';
-import {formatShortId} from '../crypto/encoding';
 import Button from '../ui/Button';
 import {Icon} from '../ui/Icon';
 import {showDialog} from '../ui/dialog';
@@ -34,7 +34,15 @@ export default function SettingsScreen() {
   const hasPhoto = useAvatarStore(s => !!s.avatars[selfId]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const [sheet, setSheet] = useState<'theme' | 'battery' | 'photo' | null>(null);
+  const [sheet, setSheet] = useState<'theme' | 'accent' | 'battery' | 'photo' | 'about' | null>(null);
+  const {accent, setAccent} = useThemeStore();
+
+  const chooseAccent = (a: AccentName) => {
+    setAccent(a);
+    try {
+      dbSetSetting('accent', a);
+    } catch {}
+  };
 
   const chooseMode = (m: ThemeMode) => {
     setMode(m);
@@ -131,8 +139,15 @@ export default function SettingsScreen() {
         <Section title="Preferences">
           <ListRow
             icon="color-palette"
-            iconColor="#0EA5E9"
-            title="Theme"
+            iconColor={t.primary}
+            title="Colour"
+            value={ACCENTS[accent].label}
+            onPress={() => setSheet('accent')}
+          />
+          <ListRow
+            icon="moon"
+            iconColor="#334155"
+            title="Light or dark"
             value={MODES.find(m => m.value === mode)?.label}
             onPress={() => setSheet('theme')}
           />
@@ -159,21 +174,14 @@ export default function SettingsScreen() {
         <Section title="Help">
           <ListRow icon="help-circle" iconColor="#F59E0B" title="Can't see someone?" onPress={tips} />
           <ListRow icon="share" iconColor="#64748B" title="Send a problem report" onPress={sendReport} />
+          <ListRow icon="information-circle" iconColor="#0EA5E9" title="About Aetheris" onPress={() => setSheet('about')} />
         </Section>
 
-        <View style={styles.about}>
-          <Logo size={40} />
-          <Text style={[styles.aboutName, {color: t.text}]}>Aetheris</Text>
-          <Text style={[styles.aboutText, {color: t.textMuted}]}>
-            Version 1.0 · ID {formatShortId(selfId)}
-            {'\n'}Messages travel phone to phone, encrypted end to end.{'\n'}No internet, no accounts.
-          </Text>
-        </View>
       </ScrollView>
 
       <OptionSheet
         visible={sheet === 'theme'}
-        title="Theme"
+        title="Light or dark"
         options={MODES}
         selected={mode}
         onSelect={chooseMode}
@@ -197,6 +205,9 @@ export default function SettingsScreen() {
         onSelect={v => (v === 'choose' ? choosePhoto() : mesh.setPhoto(null))}
         onClose={() => setSheet(null)}
       />
+
+      <ColorSheet visible={sheet === 'accent'} onSelect={chooseAccent} onClose={() => setSheet(null)} />
+      <AboutSheet visible={sheet === 'about'} onClose={() => setSheet(null)} />
 
       <Modal visible={editing} transparent animationType="fade" onRequestClose={() => setEditing(false)}>
         <Pressable style={[styles.backdrop, {backgroundColor: t.overlay}]} onPress={() => setEditing(false)}>
@@ -230,9 +241,6 @@ const styles = StyleSheet.create({
   heroPill: {flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, height: 26, borderRadius: 13},
   heroPillText: {fontFamily: Font.medium, fontSize: 12},
   dot: {width: 7, height: 7, borderRadius: 4},
-  about: {alignItems: 'center', gap: 6, marginTop: 32, paddingHorizontal: 40},
-  aboutName: {fontFamily: Font.bold, fontSize: 15, marginTop: 4},
-  aboutText: {fontFamily: Font.regular, fontSize: 12, lineHeight: 17, textAlign: 'center'},
   backdrop: {flex: 1, justifyContent: 'center', padding: 24},
   dialog: {borderRadius: 22, padding: 20, gap: 12},
   dialogHint: {fontFamily: Font.regular, fontSize: 13, lineHeight: 18, marginTop: -6},
