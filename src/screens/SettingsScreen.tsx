@@ -1,5 +1,5 @@
 import React, {useState} from 'react';
-import {View, Text, StyleSheet, ScrollView, Pressable, Modal, TextInput, Alert, Share} from 'react-native';
+import {View, Text, StyleSheet, ScrollView, Pressable, Modal, TextInput, Share} from 'react-native';
 import {Font, ThemeMode, Type, useThemeStore} from '../theme';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {POWER_PROFILES, PowerMode, useMeshService} from '../store/meshService';
@@ -15,6 +15,7 @@ import {useAvatarStore} from '../store/avatarStore';
 import {formatShortId} from '../crypto/encoding';
 import Button from '../ui/Button';
 import {Icon} from '../ui/Icon';
+import {showDialog} from '../ui/dialog';
 import {MESH_TIPS, MESH_TIPS_TITLE} from '../ui/meshStatus';
 
 const MODES: {value: ThemeMode; label: string; description: string; icon: string}[] = [
@@ -57,7 +58,7 @@ export default function SettingsScreen() {
       const img = await AetherisBridge.pickImage(192, 70, true);
       if (img) await mesh.setPhoto(img.data);
     } catch (e: any) {
-      Alert.alert("Couldn't use that photo", e?.message ?? 'Try a different one.');
+      showDialog("Couldn't use that photo", e?.message ?? 'Try a different one.', undefined, {icon: 'image-outline', tone: 'warning'});
     }
   };
 
@@ -74,7 +75,7 @@ export default function SettingsScreen() {
     Share.share({message: report}).catch(() => undefined);
   };
 
-  const tips = () => Alert.alert(MESH_TIPS_TITLE, MESH_TIPS);
+  const tips = () => showDialog(MESH_TIPS_TITLE, MESH_TIPS, [{text: 'Got it'}], {icon: 'help-buoy-outline'});
 
   const relaying = mesh.carryingForOthers;
   const nearby = mesh.routes.length;

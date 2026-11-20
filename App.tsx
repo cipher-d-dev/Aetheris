@@ -6,6 +6,7 @@ import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import {useDraftsStore} from './src/store/draftsStore';
 import {useAvatarStore} from './src/store/avatarStore';
+import DialogHost from './src/ui/DialogHost';
 import {dbGetGroup, dbGetPeer, dbGetSetting, initDatabase} from './src/db/database';
 import {ThemeMode, useThemeStore} from './src/theme';
 import {useIdentityStore} from './src/store/identityStore';
@@ -95,6 +96,7 @@ export default function App() {
           <AppNavigator />
         </NavigationContainer>
       )}
+      <DialogHost />
     </SafeAreaProvider>
   );
 }

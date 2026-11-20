@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
-import {View, Text, StyleSheet, FlatList, Pressable, TextInput, Alert, ScrollView} from 'react-native';
+import {View, Text, StyleSheet, FlatList, Pressable, TextInput, ScrollView} from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {openSettings} from 'react-native-permissions';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import {useDraftsStore} from '../store/draftsStore';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
+import {showDialog} from '../ui/dialog';
 import {statusLabel} from '../ui/a11y';
 import Chip from '../ui/Chip';
 import {displayName} from '../store/messagesStore';
@@ -100,11 +101,13 @@ function StatusLine() {
   if (line.tone === 'warning') {
     const permissionProblem = permission === 'blocked' || permission === 'denied' || !bluetoothOn;
     const showHelp = () =>
-      Alert.alert(
+      showDialog(
         line.text,
-        `${error ?? 'Unknown error'}\n\n${MESH_TIPS_TITLE}\n${MESH_TIPS}`,
+        // The raw radio error is in Settings > Help > Send a problem report.
+        `${MESH_TIPS_TITLE}\n\n${MESH_TIPS}`,
         // Start returns early while running, so a radio error has nothing to retry.
-        status === 'error' ? [{text: 'Close', style: 'cancel'}, {text: 'Try again', onPress: retry}] : [{text: 'OK'}],
+        status === 'error' ? [{text: 'Close', style: 'cancel'}, {text: 'Try again', onPress: retry}] : [{text: 'Got it'}],
+        {icon: 'help-buoy-outline', tone: 'warning'},
       );
     const action = permission === 'blocked' ? 'Settings' : permissionProblem ? (permission === 'denied' ? 'Allow' : 'Retry') : 'Help';
     const onPress = permission === 'blocked' ? () => openSettings() : permissionProblem ? retry : showHelp;
@@ -169,7 +172,7 @@ export default function ChatsScreen() {
   }, [conversations, query, filter, routes]);
 
   const confirmDelete = (c: Conversation) =>
-    Alert.alert(`Delete chat with ${c.title}?`, 'Messages are deleted from this phone.', [
+    showDialog(`Delete chat with ${c.title}?`, 'Messages are deleted from this phone.', [
       {text: 'Cancel', style: 'cancel'},
       {text: 'Delete', style: 'destructive', onPress: () => deleteConversation(c.id)},
     ]);
