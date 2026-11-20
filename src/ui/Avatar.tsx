@@ -1,7 +1,8 @@
 import React from 'react';
-import {View, Text, StyleSheet} from 'react-native';
+import {View, Text, StyleSheet, Image} from 'react-native';
 import {Font, useThemeStore} from '../theme';
 import {Icon} from './Icon';
+import {useAvatarStore} from '../store/avatarStore';
 
 export const COLORS = ['#F2555A', '#F5A524', '#17C964', '#0EA5E9', '#7C5CFC', '#EC4899', '#14B8A6', '#6366F1', '#F97316'];
 
@@ -55,11 +56,18 @@ export default function Avatar({
   group?: boolean;
 }) {
   const {theme: t} = useThemeStore();
+  const photo = useAvatarStore(s => (group ? undefined : s.avatars[id]));
   const dot = Math.max(10, size * 0.26);
   return (
     <View style={{width: size, height: size}}>
       <View style={[styles.circle, {width: size, height: size, borderRadius: size / 2, backgroundColor: avatarColor(id)}]}>
-        {group ? (
+        {photo ? (
+          <Image
+            source={{uri: `data:image/jpeg;base64,${photo}`}}
+            style={{width: size, height: size, borderRadius: size / 2}}
+            accessibilityIgnoresInvertColors
+          />
+        ) : group ? (
           <Icon name="people" size={size * 0.46} color="#FFFFFF" />
         ) : (
           <Text style={[styles.text, {fontSize: size * 0.38}]}>{initials(name)}</Text>
@@ -80,7 +88,7 @@ export default function Avatar({
 }
 
 const styles = StyleSheet.create({
-  circle: {alignItems: 'center', justifyContent: 'center'},
+  circle: {alignItems: 'center', justifyContent: 'center', overflow: 'hidden'},
   text: {color: '#FFFFFF', fontFamily: Font.bold, letterSpacing: 0.3},
   dot: {position: 'absolute', right: 0, bottom: 0, borderWidth: 2.5},
 });

@@ -2,25 +2,25 @@ import {create} from 'zustand';
 import {Appearance} from 'react-native';
 
 // ─── Typography ───────────────────────────────────────────────────────────────
-// Plus Jakarta Sans (SIL Open Font License), in android/app/src/main/assets/fonts.
+// Figtree (SIL Open Font License), in android/app/src/main/assets/fonts.
 // On Android the family name is the file name without extension.
 
 export const Font = {
-  regular: 'PlusJakartaSans-Regular',
-  medium: 'PlusJakartaSans-Medium',
-  semiBold: 'PlusJakartaSans-SemiBold',
-  bold: 'PlusJakartaSans-Bold',
-  extraBold: 'PlusJakartaSans-ExtraBold',
+  regular: 'Figtree-Regular',
+  medium: 'Figtree-Medium',
+  semiBold: 'Figtree-SemiBold',
+  bold: 'Figtree-Bold',
+  extraBold: 'Figtree-ExtraBold',
 };
 
 export const Type = {
-  largeTitle: {fontFamily: Font.extraBold, fontSize: 30, letterSpacing: -0.8},
-  title: {fontFamily: Font.bold, fontSize: 20, letterSpacing: -0.3},
-  headline: {fontFamily: Font.semiBold, fontSize: 16, letterSpacing: -0.1},
-  body: {fontFamily: Font.regular, fontSize: 15.5, lineHeight: 22},
-  callout: {fontFamily: Font.medium, fontSize: 14},
-  footnote: {fontFamily: Font.regular, fontSize: 13},
-  caption: {fontFamily: Font.medium, fontSize: 11.5},
+  largeTitle: {fontFamily: Font.extraBold, fontSize: 26, letterSpacing: -0.6},
+  title: {fontFamily: Font.bold, fontSize: 18, letterSpacing: -0.2},
+  headline: {fontFamily: Font.semiBold, fontSize: 15, letterSpacing: -0.1},
+  body: {fontFamily: Font.regular, fontSize: 15, lineHeight: 21},
+  callout: {fontFamily: Font.medium, fontSize: 13.5},
+  footnote: {fontFamily: Font.regular, fontSize: 12.5},
+  caption: {fontFamily: Font.medium, fontSize: 11},
 };
 
 // ─── Palettes ─────────────────────────────────────────────────────────────────

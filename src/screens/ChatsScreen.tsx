@@ -31,7 +31,7 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
       onPress={onPress}
       onLongPress={onLongPress}
       style={({pressed}) => [styles.row, pressed && {backgroundColor: t.surface}]}>
-      <Avatar id={item.id} name={item.title} size={52} online={nearby} group={item.isGroup} />
+      <Avatar id={item.id} name={item.title} size={48} online={nearby} group={item.isGroup} />
       <View style={styles.rowBody}>
         <View style={styles.rowLine}>
           <Text style={[styles.name, {color: t.text}]} numberOfLines={1}>
@@ -180,7 +180,7 @@ export default function ChatsScreen() {
     <View>
       <View style={[styles.searchWrap]}>
         <View style={[styles.search, {backgroundColor: t.surface}]}>
-          <Icon name="search" size={20} color={t.textMuted} />
+          <Icon name="search" size={18} color={t.textMuted} />
           <TextInput
             value={query}
             onChangeText={setQuery}
@@ -217,7 +217,7 @@ export default function ChatsScreen() {
                   accessibilityLabel={`Message ${name}, nearby`}
                   style={({pressed}) => [styles.nearbyItem, pressed && {opacity: 0.7}]}>
                   <View style={[styles.ring, {borderColor: t.primary}]}>
-                    <Avatar id={r.id} name={name} size={54} />
+                    <Avatar id={r.id} name={name} size={48} />
                   </View>
                   <Text numberOfLines={1} style={[styles.nearbyName, {color: t.text}]}>
                     {name.split(' ')[0]}
@@ -291,7 +291,7 @@ export default function ChatsScreen() {
             styles.fab,
             {backgroundColor: pressed ? t.primaryPressed : t.primary, shadowColor: t.shadow},
           ]}>
-          <Icon name="create" size={24} color={t.onPrimary} />
+          <Icon name="create" size={22} color={t.onPrimary} />
         </Pressable>
       )}
     </View>
@@ -301,37 +301,37 @@ export default function ChatsScreen() {
 const styles = StyleSheet.create({
   container: {flex: 1},
   header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 10},
-  title: {fontFamily: Font.extraBold, fontSize: 27, letterSpacing: -0.6},
-  pill: {flexDirection: 'row', alignItems: 'center', gap: 7, height: 32, paddingHorizontal: 12, borderRadius: 16},
-  pillText: {fontFamily: Font.semiBold, fontSize: 13},
+  title: {fontFamily: Font.extraBold, fontSize: 24, letterSpacing: -0.5},
+  pill: {flexDirection: 'row', alignItems: 'center', gap: 6, height: 28, paddingHorizontal: 11, borderRadius: 14},
+  pillText: {fontFamily: Font.semiBold, fontSize: 12.5},
   statusDot: {width: 8, height: 8, borderRadius: 4},
   problem: {flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginBottom: 10, padding: 12, borderRadius: 14},
   problemText: {flex: 1, fontFamily: Font.medium, fontSize: 13.5},
   problemAction: {fontFamily: Font.bold, fontSize: 13.5},
   searchWrap: {paddingHorizontal: 16, paddingBottom: 12},
-  search: {flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, height: 48, borderRadius: 24},
-  searchInput: {flex: 1, fontFamily: Font.regular, fontSize: 16, paddingVertical: 0},
+  search: {flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 14, height: 42, borderRadius: 21},
+  searchInput: {flex: 1, fontFamily: Font.regular, fontSize: 15, paddingVertical: 0},
   chips: {flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 6},
   nearbyBlock: {paddingTop: 12, paddingBottom: 4},
   sectionLabel: {fontFamily: Font.semiBold, fontSize: 13, paddingHorizontal: 20, paddingBottom: 10},
   nearbyRow: {gap: 6, paddingHorizontal: 12},
-  nearbyItem: {width: 72, alignItems: 'center', gap: 6},
-  ring: {borderWidth: 2, borderRadius: 32, padding: 2},
-  nearbyName: {fontFamily: Font.medium, fontSize: 12.5, maxWidth: 70},
-  row: {flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 10},
-  rowBody: {flex: 1, gap: 4},
+  nearbyItem: {width: 64, alignItems: 'center', gap: 5},
+  ring: {borderWidth: 2, borderRadius: 29, padding: 2},
+  nearbyName: {fontFamily: Font.medium, fontSize: 12, maxWidth: 62},
+  row: {flexDirection: 'row', alignItems: 'center', gap: 13, paddingHorizontal: 16, paddingVertical: 9},
+  rowBody: {flex: 1, gap: 3},
   rowLine: {flexDirection: 'row', alignItems: 'center', gap: 8},
-  name: {flex: 1, fontFamily: Font.semiBold, fontSize: 16.5},
-  time: {fontFamily: Font.medium, fontSize: 12},
-  preview: {flex: 1, fontFamily: Font.regular, fontSize: 14.5},
-  badge: {minWidth: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6},
-  badgeText: {fontFamily: Font.bold, fontSize: 11.5},
+  name: {flex: 1, fontFamily: Font.semiBold, fontSize: 15.5},
+  time: {fontFamily: Font.medium, fontSize: 11.5},
+  preview: {flex: 1, fontFamily: Font.regular, fontSize: 14},
+  badge: {minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6},
+  badgeText: {fontFamily: Font.bold, fontSize: 11},
   noMatch: {fontFamily: Font.medium, fontSize: 14, textAlign: 'center', paddingTop: 40, paddingHorizontal: 30},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36, paddingBottom: 80},
   emptyArt: {width: 104, height: 104, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 22},
   emptyText: {fontFamily: Font.regular, fontSize: 15, lineHeight: 22, textAlign: 'center', marginTop: 8},
   fab: {
-    position: 'absolute', right: 18, bottom: 20, width: 58, height: 58, borderRadius: 18,
+    position: 'absolute', right: 16, bottom: 18, width: 52, height: 52, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center',
     elevation: 5, shadowOpacity: 0.25, shadowRadius: 10, shadowOffset: {width: 0, height: 4},
   },

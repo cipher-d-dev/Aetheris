@@ -17,6 +17,7 @@ You get a delivery receipt (double tick ✓✓) when the message arrives. Long-p
 ## Features
 
 - Open the app, type your name, and you're in. No phone number, no account.
+- Add a profile photo if you like. It's shrunk to a small thumbnail and shared with people you're near or chat with.
 - **People** tab: everyone nearby with Aetheris, by name. Tap someone to chat.
 - Chats that feel like any modern messenger: ✓ sent, ✓✓ delivered, photos, voice messages, group chats
 - If someone has walked away, your message waits and is delivered when they're back nearby

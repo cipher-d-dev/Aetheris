@@ -43,6 +43,9 @@ export async function initDatabase(): Promise<void> {
   run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   ensureColumn('peers', 'verified', 'INTEGER DEFAULT 0');
   ensureColumn('peers', 'nickname', 'TEXT');
+  ensureColumn('peers', 'avatar', 'TEXT');
+  ensureColumn('peers', 'avatar_hash', 'TEXT');
+  ensureColumn('peers', 'avatar_sent', 'TEXT');
   ensureColumn('group_deliveries', 'expired', 'INTEGER DEFAULT 0');
   ensureColumn('messages', 'received_at', 'INTEGER');
   ensureColumn('messages', 'ref_id', 'TEXT');
@@ -359,6 +362,10 @@ export interface PeerRow {
   /** You scanned their QR code in person */
   verified: boolean;
   lastSeen: number;
+  /** Version of their photo we have ('' = none) */
+  avatarHash: string;
+  /** Version of our photo they've been sent ('' = none) */
+  avatarSent: string;
 }
 
 function rowToPeer(r: any): PeerRow {
@@ -368,7 +375,24 @@ function rowToPeer(r: any): PeerRow {
     nickname: r.nickname ?? undefined,
     verified: r.verified === 1,
     lastSeen: r.last_seen ?? 0,
+    avatarHash: r.avatar_hash ?? '',
+    avatarSent: r.avatar_sent ?? '',
   };
+}
+
+/** Store someone's profile photo ('' clears it). */
+export function dbSetPeerAvatar(id: string, hash: string, data: string): void {
+  dbUpsertPeer(id);
+  run('UPDATE peers SET avatar = ?, avatar_hash = ? WHERE id = ?', [data || null, hash || null, id]);
+}
+
+/** Remember which version of our own photo this person has been sent. */
+export function dbMarkAvatarSent(id: string, hash: string): void {
+  run('UPDATE peers SET avatar_sent = ? WHERE id = ?', [hash, id]);
+}
+
+export function dbListAvatars(): {id: string; data: string}[] {
+  return rows('SELECT id, avatar FROM peers WHERE avatar IS NOT NULL').map(r => ({id: r.id, data: r.avatar}));
 }
 
 export function dbUpsertPeer(id: string, alias?: string): void {

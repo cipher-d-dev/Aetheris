@@ -123,6 +123,8 @@ export interface MeshEvents {
   onCarryChanged?(count: number): void;
   /** Neighbours or routes changed — refresh UI. */
   onTopologyChanged?(): void;
+  /** A directly linked (authenticated) neighbour sent its profile photo. '' data = removed. */
+  onProfile?(nodeId: string, photo: ProfilePhoto): void;
   log?(msg: string): void;
 }
 
@@ -134,7 +136,30 @@ export type Frame =
   | {t: 'HELLO'; v: number; id: string; nonce: string; alias?: string}
   | {t: 'PROOF'; id: string; sig: string}
   | {t: 'ROUTES'; r: AdvertEntry[]}
-  | {t: 'MSG'; m: MeshMessage};
+  | {t: 'MSG'; m: MeshMessage}
+  | {t: 'PROFILE'; h: string; d: string};
+
+/** A small profile photo: hash identifies the version, data is base64 JPEG ('' = none). */
+export interface ProfilePhoto {
+  hash: string;
+  data: string;
+}
+
+/** Largest profile photo accepted from another phone (base64 characters). */
+export const MAX_PROFILE_PHOTO = 24_000;
+
+export function isValidProfilePhoto(p: unknown): p is ProfilePhoto {
+  if (!p || typeof p !== 'object') return false;
+  const {hash, data} = p as Record<string, unknown>;
+  return (
+    typeof hash === 'string' &&
+    hash.length <= 64 &&
+    typeof data === 'string' &&
+    data.length <= MAX_PROFILE_PHOTO &&
+    (data === '') === (hash === '') &&
+    /^[A-Za-z0-9+/=]*$/.test(data)
+  );
+}
 
 function proofText(challenge: string, proverId: string): string {
   return `aetheris-link-v${LINK_PROTOCOL_VERSION}|${challenge}|${proverId}`;
@@ -176,6 +201,7 @@ export class MeshNode {
   private carrySizes = new Map<string, number>();
   private verifiedOrigins = new Set<string>();
   private ownSig?: {seq: number; alias?: string; sig: string};
+  private photo: ProfilePhoto = {hash: '', data: ''};
   alias?: string;
 
   constructor(
@@ -284,6 +310,12 @@ export class MeshNode {
       case 'MSG':
         if (!link.authenticated || !link.claimedId) return;
         return this.handleMessage(link.claimedId, frame.m);
+      case 'PROFILE': {
+        if (!link.authenticated || !link.claimedId) return;
+        const photo = {hash: frame.h, data: frame.d};
+        if (isValidProfilePhoto(photo)) this.events.onProfile?.(link.claimedId, photo);
+        return;
+      }
     }
   }
 
@@ -323,8 +355,21 @@ export class MeshNode {
     this.events.onTopologyChanged?.();
 
     await this.sendRoutes(f.id);
+    if (this.photo.hash) await this.sendFrame(link.linkId, {t: 'PROFILE', h: this.photo.hash, d: this.photo.data});
     this.scheduleTriggeredAdvert();
     await this.processCarry();
+  }
+
+  /** Set (or clear, with null) our profile photo and share it with current neighbours. */
+  async setPhoto(photo: ProfilePhoto | null): Promise<void> {
+    const next = photo ?? {hash: '', data: ''};
+    if (next.hash === this.photo.hash) return;
+    const hadPhoto = !!this.photo.hash;
+    this.photo = next;
+    if (!next.hash && !hadPhoto) return;
+    await Promise.all(
+      [...this.neighbours.values()].map(linkId => this.sendFrame(linkId, {t: 'PROFILE', h: next.hash, d: next.data})),
+    );
   }
 
   // ─── Routing ────────────────────────────────────────────────────────────────

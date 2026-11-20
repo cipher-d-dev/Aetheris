@@ -62,8 +62,8 @@ export const AetherisBridge = {
 
   // ─── Media ──────────────────────────────────────────────────────────────
   /** Resolves null if the user cancels. */
-  pickImage: (maxDim = 1024, quality = 60): Promise<PickedImage | null> =>
-    AetherisNativeModule.pickImage(maxDim, quality),
+  pickImage: (maxDim = 1024, quality = 60, square = false): Promise<PickedImage | null> =>
+    AetherisNativeModule.pickImage(maxDim, quality, square),
   startRecording: (): Promise<void> => AetherisNativeModule.startRecording(),
   stopRecording: (): Promise<RecordedAudio> => AetherisNativeModule.stopRecording(),
   cancelRecording: (): Promise<void> => AetherisNativeModule.cancelRecording(),

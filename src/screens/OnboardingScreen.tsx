@@ -1,5 +1,5 @@
-import React, {useState} from 'react';
-import {View, Text, TextInput, StyleSheet, KeyboardAvoidingView} from 'react-native';
+import React, {useEffect, useRef, useState} from 'react';
+import {View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Pressable, Alert, ScrollView} from 'react-native';
 import {openSettings} from 'react-native-permissions';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
@@ -9,6 +9,9 @@ import {requestRadioPermissions} from '../native/permissions';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import Button from '../ui/Button';
 import Avatar from '../ui/Avatar';
+import Logo from '../ui/Logo';
+import {AetherisBridge} from '../native/AetherisBridge';
+import {useAvatarStore} from '../store/avatarStore';
 import {Icon} from '../ui/Icon';
 
 /**
@@ -45,26 +48,61 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
     onDone();
   };
 
+  const hasPhoto = useAvatarStore(s => !!s.avatars[selfId]);
+  const scrollRef = useRef<ScrollView>(null);
+  // Smaller photo while typing, and keep the name field in view above the keyboard.
+  const avatarSize = keyboardVisible ? 64 : 96;
+  useEffect(() => {
+    if (keyboardVisible) setTimeout(() => scrollRef.current?.scrollToEnd({animated: true}), 50);
+  }, [keyboardVisible]);
+  const pickPhoto = async () => {
+    try {
+      const img = await AetherisBridge.pickImage(192, 70, true);
+      if (img) await useMeshService.getState().setPhoto(img.data);
+    } catch (e: any) {
+      Alert.alert("Couldn't use that photo", e?.message ?? 'Try a different one.');
+    }
+  };
+
   if (step === 'name') {
     return (
       <KeyboardAvoidingView
         style={[styles.container, {paddingTop: insets.top + 40, paddingBottom: 32 + (keyboardVisible ? 0 : insets.bottom), backgroundColor: t.bg}]}
         behavior={keyboardAvoidingBehavior()}>
-        <View style={styles.top}>
-          <Text style={[styles.brand, {color: t.primary}]}>Aetheris</Text>
+        {/* Scrolls when the keyboard leaves too little room, so Continue never covers the field. */}
+        <ScrollView
+          ref={scrollRef}
+          style={styles.top}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}>
+          <View style={[styles.brandRow, keyboardVisible && styles.brandRowCompact]}>
+            <Logo size={36} />
+            <Text style={[styles.brand, {color: t.text}]}>Aetheris</Text>
+          </View>
           <Text style={[Type.largeTitle, {color: t.text}]}>What should people call you?</Text>
           <Text style={[styles.lead, {color: t.textSub}]}>
             People near you will see this name when they want to message you.
           </Text>
-          <View style={styles.preview}>
-            {name.trim() ? (
-              <Avatar id={selfId} name={name} size={96} />
-            ) : (
-              <View style={[styles.emptyAvatar, {backgroundColor: t.surface}]}>
-                <Icon name="person" size={44} color={t.textMuted} />
+          <Pressable
+            style={[styles.preview, keyboardVisible && styles.previewCompact]}
+            onPress={pickPhoto}
+            accessibilityRole="button"
+            accessibilityLabel={hasPhoto ? 'Change profile photo' : 'Add a profile photo (optional)'}>
+            <View>
+              {name.trim() || hasPhoto ? (
+                <Avatar id={selfId} name={name || '?'} size={avatarSize} />
+              ) : (
+                <View style={[styles.emptyAvatar, {width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2, backgroundColor: t.surface}]}>
+                  <Icon name="person" size={avatarSize * 0.46} color={t.textMuted} />
+                </View>
+              )}
+              <View style={[styles.cameraBadge, {backgroundColor: t.primary, borderColor: t.bg}]}>
+                <Icon name="camera" size={15} color={t.onPrimary} />
               </View>
-            )}
-          </View>
+            </View>
+            <Text style={[styles.photoHint, {color: t.primaryText}]}>{hasPhoto ? 'Change photo' : 'Add a photo (optional)'}</Text>
+          </Pressable>
           <TextInput
             value={name}
             onChangeText={setName}
@@ -76,8 +114,8 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
             onSubmitEditing={saveName}
             style={[styles.input, {color: t.text, backgroundColor: t.surface}]}
           />
-        </View>
-        <Button title="Continue" onPress={saveName} disabled={!name.trim()} />
+        </ScrollView>
+        <Button title="Continue" onPress={saveName} disabled={!name.trim()} style={styles.continue} />
       </KeyboardAvoidingView>
     );
   }
@@ -126,9 +164,16 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
 const styles = StyleSheet.create({
   container: {flex: 1, paddingHorizontal: 24},
   top: {flex: 1},
-  brand: {fontFamily: Font.bold, fontSize: 15, marginBottom: 14, letterSpacing: 0.2},
+  scrollContent: {flexGrow: 1, paddingBottom: 12},
+  continue: {marginTop: 8},
+  brandRowCompact: {marginBottom: 12},
+  previewCompact: {marginTop: 14, marginBottom: 14},
+  brandRow: {flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 22},
+  brand: {fontFamily: Font.extraBold, fontSize: 18, letterSpacing: -0.2},
   lead: {fontFamily: Font.regular, fontSize: 16, lineHeight: 24, marginTop: 10},
   preview: {alignItems: 'center', marginTop: 36, marginBottom: 24},
+  cameraBadge: {position: 'absolute', right: -2, bottom: -2, width: 32, height: 32, borderRadius: 16, borderWidth: 3, alignItems: 'center', justifyContent: 'center'},
+  photoHint: {fontFamily: Font.semiBold, fontSize: 13, marginTop: 10},
   emptyAvatar: {width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center'},
   input: {height: 58, borderRadius: 16, paddingHorizontal: 18, fontFamily: Font.semiBold, fontSize: 18},
   hero: {width: 112, height: 112, borderRadius: 34, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 28},

@@ -46,13 +46,13 @@ export default function Button({
 
 const styles = StyleSheet.create({
   button: {
-    height: 54,
-    borderRadius: 16,
+    height: 48,
+    borderRadius: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     paddingHorizontal: 22,
   },
-  text: {fontFamily: Font.semiBold, fontSize: 16},
+  text: {fontFamily: Font.semiBold, fontSize: 15},
 });

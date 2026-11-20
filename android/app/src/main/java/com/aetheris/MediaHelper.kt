@@ -40,7 +40,8 @@ class MediaHelper(private val context: Context) {
             addCategory(Intent.CATEGORY_OPENABLE)
         }
 
-    fun compressImage(uri: Uri, maxDim: Int, quality: Int): Image {
+    /** square = centre-crop to a square first (profile photos). */
+    fun compressImage(uri: Uri, maxDim: Int, quality: Int, square: Boolean = false): Image {
         val resolver = context.contentResolver
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -66,12 +67,17 @@ class MediaHelper(private val context: Context) {
             }
         }
 
-        val scale = minOf(1f, maxDim.toFloat() / maxOf(decoded.width, decoded.height))
+        val side = minOf(decoded.width, decoded.height)
+        val srcW = if (square) side else decoded.width
+        val srcH = if (square) side else decoded.height
+        val srcX = (decoded.width - srcW) / 2
+        val srcY = (decoded.height - srcH) / 2
+        val scale = minOf(1f, maxDim.toFloat() / maxOf(srcW, srcH))
         val matrix = Matrix().apply {
             postScale(scale, scale)
             postRotate(rotation.toFloat())
         }
-        val finalBitmap = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+        val finalBitmap = Bitmap.createBitmap(decoded, srcX, srcY, srcW, srcH, matrix, true)
 
         val out = ByteArrayOutputStream()
         finalBitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(20, 95), out)

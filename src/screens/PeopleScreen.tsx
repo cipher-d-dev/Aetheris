@@ -73,7 +73,7 @@ export function PersonRow({
       accessibilityState={accessibilityState}
       onPress={onPress}
       style={({pressed}) => [styles.row, pressed && {backgroundColor: t.surface}]}>
-      <Avatar id={person.id} name={person.name} size={48} online={person.nearby} />
+      <Avatar id={person.id} name={person.name} size={44} online={person.nearby} />
       <View style={{flex: 1}}>
         <Text style={[styles.name, {color: t.text}]} numberOfLines={1}>
           {person.name}
@@ -187,19 +187,19 @@ export default function PeopleScreen() {
 }
 
 const styles = StyleSheet.create({
-  bigTitle: {fontFamily: Font.extraBold, fontSize: 27, letterSpacing: -0.6},
+  bigTitle: {fontFamily: Font.extraBold, fontSize: 24, letterSpacing: -0.5},
   container: {flex: 1},
   header: {flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 20, paddingBottom: 10},
   headerModal: {paddingHorizontal: 8},
   row: {flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 10},
-  action: {width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center'},
-  name: {fontFamily: Font.semiBold, fontSize: 16.5},
-  sub: {fontFamily: Font.medium, fontSize: 13, marginTop: 2},
+  action: {width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center'},
+  name: {fontFamily: Font.semiBold, fontSize: 15.5},
+  sub: {fontFamily: Font.medium, fontSize: 12.5, marginTop: 1},
   section: {fontFamily: Font.semiBold, fontSize: 13, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 6},
   hint: {fontFamily: Font.regular, fontSize: 13, lineHeight: 19, paddingHorizontal: 20, paddingTop: 18},
   searching: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, paddingBottom: 60},
   radar: {width: 160, height: 160, alignItems: 'center', justifyContent: 'center', marginBottom: 20},
   ring: {position: 'absolute', width: 90, height: 90, borderRadius: 45},
   radarCore: {width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center'},
-  searchingText: {fontFamily: Font.regular, fontSize: 14.5, lineHeight: 21, textAlign: 'center', marginTop: 8},
+  searchingText: {fontFamily: Font.regular, fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 8},
 });
