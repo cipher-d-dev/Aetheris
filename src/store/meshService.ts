@@ -201,13 +201,23 @@ export const useMeshService = create<MeshState>((set, get) => {
       g.members.includes(senderId) &&
       g.members.includes(self)
     ) {
-      const group: GroupInfo = {
-        id: g.id.slice(0, 64),
-        name: g.name.slice(0, 64),
-        members: g.members.filter(x => typeof x === 'string').slice(0, 64),
-      };
-      dbUpsertGroup(group);
-      conversationId = GROUP_PREFIX + group.id;
+      const id = g.id.slice(0, 64);
+      const known = dbGetGroup(id);
+      if (known) {
+        // Groups don't change after they are created, so a message can't rename
+        // one or change its members, and only a stored member can post to it.
+        if (!known.members.includes(senderId)) {
+          logEvent(`dropped ${m.id.slice(0, 8)}: ${senderId.slice(0, 6)} is not in group ${id.slice(0, 8)}`);
+          return;
+        }
+      } else {
+        dbUpsertGroup({
+          id,
+          name: g.name.slice(0, 64),
+          members: g.members.filter(x => typeof x === 'string').slice(0, 64),
+        });
+      }
+      conversationId = GROUP_PREFIX + id;
     }
 
     const kind: ContentKind =
