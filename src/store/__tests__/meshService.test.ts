@@ -444,6 +444,29 @@ describe('meshService with a peer phone', () => {
     expect(dbGetConversation(conversationId).some(m => m.text === 'let me in')).toBe(false);
   });
 
+  it("ignores a reaction from someone who isn't in the group", async () => {
+    const carol = await keypair();
+    const conversationId = useMeshService.getState().createGroup('Book club', [carol.id]);
+    const gid = conversationId.slice('group:'.length);
+    const before = dbGetGroup(gid);
+    const id = await useMeshService.getState().sendToConversation(conversationId, {kind: 'text', text: 'chapter 3?'});
+    const ref = dbGetConversation(conversationId).find(m => m.id === id)!.refId;
+
+    // Bob isn't a member but lists himself in the group to react.
+    await bobNode.send({
+      recipientId: me.id,
+      content: {
+        kind: 'text',
+        text: 'Reacted',
+        reaction: {messageId: ref, emoji: '👍'},
+        group: {id: gid, name: 'Hijacked', members: [bob.id, me.id, carol.id]},
+      },
+    });
+    await settle();
+    expect(dbReactionsFor(conversationId)[ref]).toBeUndefined();
+    expect(dbGetGroup(gid)).toEqual(before);
+  });
+
   it('keeps a known group as stored when a member sends different details', async () => {
     const carol = await keypair();
     const conversationId = useMeshService.getState().createGroup('Trip', [bob.id, carol.id]);
