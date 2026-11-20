@@ -5,6 +5,7 @@ import {SafeAreaProvider} from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import {useDraftsStore} from './src/store/draftsStore';
+import {useAvatarStore} from './src/store/avatarStore';
 import {dbGetGroup, dbGetPeer, dbGetSetting, initDatabase} from './src/db/database';
 import {ThemeMode, useThemeStore} from './src/theme';
 import {useIdentityStore} from './src/store/identityStore';
@@ -33,6 +34,8 @@ export default function App() {
         await initializeIdentity();
         useMessagesStore.getState().loadConversations();
         useDraftsStore.getState().loadDrafts();
+        const self = useIdentityStore.getState().identity?.publicKeyBase58;
+        useAvatarStore.getState().load(self ? {id: self, data: dbGetSetting('photo') || null} : undefined);
         setPhase(alias ? 'ready' : 'onboarding');
       } catch (e) {
         console.error('[App] setup failed', e);

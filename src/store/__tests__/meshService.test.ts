@@ -31,6 +31,7 @@ import {Buffer} from 'buffer';
 import {AetherisBridge} from '../../native/AetherisBridge';
 import {initDatabase, dbDeleteMessage, dbPruneOrphanReactions, dbFindByRef, dbReactionsFor, dbSetReaction, dbGroupDeliveries, dbGetConversation, dbGetGroup, dbListConversations} from '../../db/database';
 import {groupRef, useMeshService} from '../meshService';
+import {useAvatarStore} from '../avatarStore';
 import {displayName, useMessagesStore} from '../messagesStore';
 import {
   dbAddGroupDelivery,
@@ -544,6 +545,49 @@ describe('meshService with a peer phone', () => {
     expect(dbGetConversation(erin.id)).toEqual([]);
     expect(useMeshService.getState().carrying).toBe(before);
     expect(useMessagesStore.getState().messages[erin.id]).toBeUndefined();
+  });
+
+  describe('profile photos', () => {
+    const jpeg = (seed: string) => Buffer.from(`fake-jpeg-${seed}`).toString('base64');
+
+    it('sends my photo with the first message to someone, then only after it changes', async () => {
+      await useMeshService.getState().setPhoto(jpeg('1'));
+      const before = bobInbox.length;
+      await useMeshService.getState().sendToConversation(bob.id, {kind: 'text', text: 'pic 1'});
+      await useMeshService.getState().sendToConversation(bob.id, {kind: 'text', text: 'pic 2'});
+      await settle();
+      const [first, second] = bobInbox.slice(before).map(x => x.c);
+      expect(first.avatar).toMatchObject({data: jpeg('1')});
+      expect(second.avatar).toBeUndefined();
+
+      await useMeshService.getState().setPhoto(jpeg('2'));
+      await useMeshService.getState().sendToConversation(bob.id, {kind: 'text', text: 'pic 3'});
+      await settle();
+      expect(bobInbox.at(-1)!.c.avatar).toMatchObject({data: jpeg('2')});
+      expect(useAvatarStore.getState().avatars[me.id]).toBe(jpeg('2'));
+    });
+
+    it("stores a neighbour's photo and a photo carried in a message", async () => {
+      await bobNode.setPhoto({hash: 'bob-1', data: jpeg('bob')});
+      await settle();
+      expect(useAvatarStore.getState().avatars[bob.id]).toBe(jpeg('bob'));
+      expect(dbGetPeer(bob.id)!.avatarHash).toBe('bob-1');
+
+      await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'new pic', avatar: {hash: 'bob-2', data: jpeg('bob2')}}});
+      await settle();
+      expect(useAvatarStore.getState().avatars[bob.id]).toBe(jpeg('bob2'));
+
+      // Removal
+      await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'no pic', avatar: {hash: '', data: ''}}});
+      await settle();
+      expect(useAvatarStore.getState().avatars[bob.id]).toBeUndefined();
+    });
+
+    it('ignores a malformed photo in a message', async () => {
+      await bobNode.send({recipientId: me.id, content: {kind: 'text', text: 'x', avatar: {hash: 'bad', data: '<svg onload=1>'}}});
+      await settle();
+      expect(dbGetPeer(bob.id)!.avatarHash).not.toBe('bad');
+    });
   });
 
   it('marks routes down when the link drops', async () => {

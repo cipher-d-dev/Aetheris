@@ -279,3 +279,38 @@ describe('storage limits', () => {
     expect(held.filter(id => id !== own.id)).toEqual(ids.slice(-3));
   });
 });
+
+describe('profile photos', () => {
+  const photo = (seed: string) => ({hash: `h-${seed}`, data: Buffer.from(`jpeg-${seed}`).toString('base64')});
+
+  it('shares a photo with a neighbour on connect and when it changes', async () => {
+    const net = new SimNetwork();
+    const got: {from: string; hash: string}[] = [];
+    net.add('A');
+    net.add('B', {onProfile: (from, p) => got.push({from, hash: p.hash})});
+    await net.get('A').node.setPhoto(photo('1'));
+    await net.link('A', 'B');
+    expect(got).toEqual([{from: 'A', hash: 'h-1'}]);
+
+    await net.get('A').node.setPhoto(photo('2'));
+    await net.settle();
+    await net.get('A').node.setPhoto(null);
+    await net.settle();
+    expect(got.map(g => g.hash)).toEqual(['h-1', 'h-2', '']);
+  });
+
+  it('ignores oversized or malformed photos, and photos from unauthenticated links', async () => {
+    const net = new SimNetwork();
+    const got: string[] = [];
+    net.add('A');
+    net.add('B', {onProfile: (_f, p) => got.push(p.hash)});
+    await net.link('A', 'B');
+    const B = net.get('B').node;
+    await B.onFrame('B->A', JSON.stringify({t: 'PROFILE', h: 'x', d: 'A'.repeat(30_000)}));
+    await B.onFrame('B->A', JSON.stringify({t: 'PROFILE', h: 'x', d: '<script>'}));
+    await B.onFrame('B->A', JSON.stringify({t: 'PROFILE', h: '', d: 'QUJD'}));
+    await B.onLinkUp('B->Z'); // new, unauthenticated link
+    await B.onFrame('B->Z', JSON.stringify({t: 'PROFILE', h: 'z', d: 'QUJD'}));
+    expect(got).toEqual([]);
+  });
+});

@@ -111,6 +111,8 @@ export interface MessageContent {
   media?: MediaAttachment;
   /** Sender's display name, carried inside the encrypted payload */
   alias?: string;
+  /** Sender's profile photo, included the first time (and after each change) per recipient */
+  avatar?: {hash: string; data: string};
   /** Present when this message belongs to a group chat */
   group?: GroupInfo;
   /** The message this one replies to. Travels inside the encrypted payload; old clients ignore it. */

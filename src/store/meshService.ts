@@ -12,7 +12,8 @@ import {create} from 'zustand';
 import {AppState, EmitterSubscription} from 'react-native';
 import {useDraftsStore} from './draftsStore';
 import {AetherisBridge} from '../native/AetherisBridge';
-import {MeshConfig, MeshNode} from '../mesh/meshNode';
+import {isValidProfilePhoto, MeshConfig, MeshNode, ProfilePhoto} from '../mesh/meshNode';
+import {photoHash, useAvatarStore} from './avatarStore';
 import {createRnCrypto} from '../mesh/rnCrypto';
 import {loadPrivateKey} from '../crypto/identity';
 import {
@@ -32,6 +33,9 @@ import {
   dbAddGroupDelivery,
   dbDeleteMessage,
   dbDeleteConversation,
+  dbGetPeer,
+  dbMarkAvatarSent,
+  dbSetPeerAvatar,
   dbGetMessage,
   dbFindByRef,
   dbRefUsedByOther,
@@ -173,6 +177,8 @@ interface MeshState {
   start: (selfId: string) => Promise<void>;
   stop: () => Promise<void>;
   setAlias: (alias: string) => void;
+  /** Set (base64 JPEG) or remove (null) your profile photo. */
+  setPhoto: (data: string | null) => Promise<void>;
   setPowerMode: (mode: PowerMode) => void;
   sendToConversation: (conversationId: string, content: OutgoingContent) => Promise<string>;
   /** React to a message (by its refId) with one of REACTIONS, or '' to remove ours. */
@@ -221,12 +227,50 @@ export const useMeshService = create<MeshState>((set, get) => {
 
   // ─── Mesh events → DB/UI ────────────────────────────────────────────────
 
+  /** Someone's photo arrived (from a neighbour link or inside a message). */
+  const applyPeerPhoto = (id: string, photo: ProfilePhoto) => {
+    if (id === get().selfId) return;
+    try {
+      if ((dbGetPeer(id)?.avatarHash ?? '') === photo.hash) return;
+      dbSetPeerAvatar(id, photo.hash, photo.data);
+    } catch {
+      return;
+    }
+    useAvatarStore.getState().setAvatar(id, photo.data || null);
+  };
+
+  const ownPhoto = (): ProfilePhoto | null => {
+    const data = dbGetSetting('photo');
+    return data ? {hash: dbGetSetting('photoHash') ?? photoHash(data), data} : null;
+  };
+
+  /** Our photo for a recipient's copy, if they haven't been sent this version yet. */
+  const photoFor = (recipientId: string): Pick<MessageContent, 'avatar'> => {
+    const own = ownPhoto();
+    const hash = own?.hash ?? '';
+    let sent = '';
+    try {
+      sent = dbGetPeer(recipientId)?.avatarSent ?? '';
+    } catch {}
+    return sent === hash ? {} : {avatar: own ?? {hash: '', data: ''}};
+  };
+
+  const markPhotoSent = (recipientId: string, content: MessageContent) => {
+    if (content.avatar) {
+      try {
+        dbUpsertPeer(recipientId);
+        dbMarkAvatarSent(recipientId, content.avatar.hash);
+      } catch {}
+    }
+  };
+
   const onDeliver = (m: MeshMessage, content: MessageContent) => {
     const self = get().selfId!;
     const senderId = m.sender.id;
     logEvent(`delivered ${m.id.slice(0, 8)} from ${senderId.slice(0, 6)} after ${m.routing.hops.length + 1} hop(s)`);
     const alias = typeof content.alias === 'string' ? content.alias.slice(0, 32) : undefined;
     dbUpsertPeer(senderId, alias);
+    if (content.avatar !== undefined && isValidProfilePhoto(content.avatar)) applyPeerPhoto(senderId, content.avatar);
 
     let conversationId = senderId;
     let isGroupMessage = false;
@@ -411,6 +455,7 @@ export const useMeshService = create<MeshState>((set, get) => {
             onSent,
             onExpired,
             onTopologyChanged: refreshTopology,
+            onProfile: (nodeId, photo) => applyPeerPhoto(nodeId, photo),
             onCarryChanged: count => {
               const others = node?.carryForOthersCount() ?? 0;
               if (get().carrying !== count || get().carryingForOthers !== others) {
@@ -425,6 +470,8 @@ export const useMeshService = create<MeshState>((set, get) => {
           {...profile.mesh, routeTimeoutMs: ROUTE_TIMEOUT_MS},
         );
         node.alias = alias || undefined;
+        const own = ownPhoto();
+        if (own) await node.setPhoto(own);
 
         subs.forEach(s => s.remove());
         subs = [
@@ -475,6 +522,20 @@ export const useMeshService = create<MeshState>((set, get) => {
       node = null;
       await AetherisBridge.stop().catch(() => undefined);
       set({status: 'stopped', neighbours: [], routes: [], nearbyCount: 0});
+    },
+
+    setPhoto: async (data: string | null) => {
+      if (data && data.length > 24_000) throw new Error('That photo is too large');
+      const self = get().selfId;
+      if (data) {
+        dbSetSetting('photo', data);
+        dbSetSetting('photoHash', photoHash(data));
+      } else {
+        dbSetSetting('photo', '');
+        dbSetSetting('photoHash', '');
+      }
+      if (self) useAvatarStore.getState().setAvatar(self, data);
+      await node?.setPhoto(data ? {hash: photoHash(data), data} : null);
     },
 
     setAlias: (alias: string) => {
@@ -535,14 +596,14 @@ export const useMeshService = create<MeshState>((set, get) => {
           for (const member of recipients) {
             const subId = uuid();
             dbAddGroupDelivery(subId, id, member);
-            await node.send({
-              id: subId,
-              recipientId: member,
-              content: {...base, group, groupMessageId: id},
-            });
+            const memberContent: MessageContent = {...base, ...photoFor(member), group, groupMessageId: id};
+            await node.send({id: subId, recipientId: member, content: memberContent});
+            markPhotoSent(member, memberContent);
           }
         } else {
-          await node.send({id, recipientId: conversationId, content: base});
+          const one: MessageContent = {...base, ...photoFor(conversationId)};
+          await node.send({id, recipientId: conversationId, content: one});
+          markPhotoSent(conversationId, one);
         }
       } catch (e) {
         dbUpdateMessageStatus(id, 'failed');

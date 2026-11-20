@@ -52,6 +52,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
     private var pickPromise: Promise? = null
     private var pickMaxDim = 1024
     private var pickQuality = 60
+    private var pickSquare = false
 
     private val tickHandler = Handler(Looper.getMainLooper())
     private var tickMs = 0L
@@ -173,7 +174,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
     // ─── Media ─────────────────────────────────────────────────────────────
 
     @ReactMethod
-    fun pickImage(maxDim: Double, quality: Double, promise: Promise) {
+    fun pickImage(maxDim: Double, quality: Double, square: Boolean, promise: Promise) {
         val activity = currentActivity
         if (activity == null) {
             promise.reject("NO_ACTIVITY", "App is not in the foreground")
@@ -183,6 +184,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
         pickPromise = promise
         pickMaxDim = maxDim.toInt()
         pickQuality = quality.toInt()
+        pickSquare = square
         try {
             activity.startActivityForResult(media.pickImageIntent(), MediaHelper.PICK_IMAGE_REQUEST)
         } catch (e: Exception) {
@@ -202,7 +204,7 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
         }
         worker.execute {
             try {
-                val img = media.compressImage(uri, pickMaxDim, pickQuality)
+                val img = media.compressImage(uri, pickMaxDim, pickQuality, pickSquare)
                 promise.resolve(Arguments.createMap().apply {
                     putString("data", img.base64)
                     putString("mime", "image/jpeg")
