@@ -6,8 +6,9 @@ import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import {useDraftsStore} from './src/store/draftsStore';
 import {useAvatarStore} from './src/store/avatarStore';
+import DialogHost from './src/ui/DialogHost';
 import {dbGetGroup, dbGetPeer, dbGetSetting, initDatabase} from './src/db/database';
-import {ThemeMode, useThemeStore} from './src/theme';
+import {AccentName, ThemeMode, useThemeStore} from './src/theme';
 import {useIdentityStore} from './src/store/identityStore';
 import {useMeshService} from './src/store/meshService';
 import {useMessagesStore} from './src/store/messagesStore';
@@ -29,6 +30,8 @@ export default function App() {
         await initDatabase();
         const mode = dbGetSetting('themeMode') as ThemeMode | null;
         if (mode) useThemeStore.getState().setMode(mode);
+        const accent = dbGetSetting('accent') as AccentName | null;
+        if (accent) useThemeStore.getState().setAccent(accent);
         const alias = dbGetSetting('alias') ?? '';
         useMeshService.setState({alias});
         await initializeIdentity();
@@ -95,6 +98,7 @@ export default function App() {
           <AppNavigator />
         </NavigationContainer>
       )}
+      <DialogHost />
     </SafeAreaProvider>
   );
 }

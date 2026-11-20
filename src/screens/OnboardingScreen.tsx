@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
-import {View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Pressable, Alert, ScrollView} from 'react-native';
+import {View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Pressable, ScrollView} from 'react-native';
 import {openSettings} from 'react-native-permissions';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
@@ -13,6 +13,7 @@ import Logo from '../ui/Logo';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {useAvatarStore} from '../store/avatarStore';
 import {Icon} from '../ui/Icon';
+import {showDialog} from '../ui/dialog';
 
 /**
  * First run: pick a name, then allow Bluetooth/nearby access.
@@ -60,7 +61,7 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
       const img = await AetherisBridge.pickImage(192, 70, true);
       if (img) await useMeshService.getState().setPhoto(img.data);
     } catch (e: any) {
-      Alert.alert("Couldn't use that photo", e?.message ?? 'Try a different one.');
+      showDialog("Couldn't use that photo", e?.message ?? 'Try a different one.', undefined, {icon: 'image-outline', tone: 'warning'});
     }
   };
 

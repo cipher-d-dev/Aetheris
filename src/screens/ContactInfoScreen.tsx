@@ -1,8 +1,9 @@
 import React, {useState} from 'react';
-import {View, Text, StyleSheet, ScrollView, Alert, TextInput, Modal, Pressable} from 'react-native';
+import {View, Text, StyleSheet, ScrollView, TextInput, Modal, Pressable} from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
+import {showDialog} from '../ui/dialog';
 import {
   conversationTitle,
   displayName,
@@ -43,7 +44,7 @@ export default function ContactInfoScreen() {
   };
 
   const deleteChat = () =>
-    Alert.alert(`Delete chat with ${title}?`, 'Messages are deleted from this phone.', [
+    showDialog(`Delete chat with ${title}?`, 'Messages are deleted from this phone.', [
       {text: 'Cancel', style: 'cancel'},
       {
         text: 'Delete',

@@ -12,7 +12,6 @@ import {
   KeyboardAvoidingView,
   Image,
   Modal,
-  Alert,
   ActivityIndicator,
   Platform,
   AccessibilityInfo,
@@ -36,6 +35,7 @@ import {useDraftsStore} from '../store/draftsStore';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
+import {showDialog} from '../ui/dialog';
 import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import Wallpaper from '../ui/Wallpaper';
@@ -683,13 +683,13 @@ export default function ChatScreen() {
       text = m.recipientCount
         ? `Delivered to ${m.deliveredCount} of ${m.recipientCount}.`
         : `Delivered.${viaText}`;
-    Alert.alert('Message info', text);
+    showDialog('Message info', text, undefined, {icon: 'information-circle-outline'});
   };
 
   const statusInfo = (m: ChatMessage) => {
     const text = explain(m);
     const delivered = m.recipientCount ? `Delivered to ${m.deliveredCount} of ${m.recipientCount}.` : 'Delivered.';
-    Alert.alert(statusLabel(m.status), text ?? delivered);
+    showDialog(statusLabel(m.status), text ?? delivered, undefined, {icon: m.status === 'failed' ? 'alert-circle' : m.status === 'delivered' ? 'checkmark-done' : 'time-outline', tone: m.status === 'failed' ? 'danger' : 'default'});
   };
 
   const copyMessage = (text: string) => {
@@ -767,7 +767,7 @@ export default function ChatScreen() {
       icon: 'trash-outline',
       destructive: true,
       onPress: () =>
-        Alert.alert('Delete message?', 'It will be removed from this phone.', [
+        showDialog('Delete message?', 'It will be removed from this phone.', [
           {text: 'Cancel', style: 'cancel'},
           {
             text: 'Delete',
