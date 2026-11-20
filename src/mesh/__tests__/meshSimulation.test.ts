@@ -99,6 +99,16 @@ describe('store-carry-forward', () => {
     expect(net.get('A').node.carryCount()).toBe(0);
   });
 
+  it('counts only other people\'s messages as carried for others', async () => {
+    const net = await build(['A', 'B', 'C'], [['A', 'B']]);
+    await net.get('A').node.send({recipientId: 'C', content: {text: 'later'}});
+    await net.settle();
+
+    expect(net.get('B').node.carryForOthersCount()).toBe(1);
+    expect(net.get('A').node.carryForOthersCount()).toBe(0);
+    expect(net.get('A').node.carryCount()).toBe(1);
+  });
+
   it('queues on the sender when it has no neighbours at all', async () => {
     const net = await build(['A', 'B'], []);
     await net.get('A').node.send({recipientId: 'B', content: {text: 'queued'}});

@@ -1,8 +1,8 @@
 import React, {useState} from 'react';
-import {View, Text, StyleSheet, ScrollView, Switch, Pressable, Modal, TextInput, Alert, Share} from 'react-native';
+import {View, Text, StyleSheet, ScrollView, Pressable, Modal, TextInput, Alert, Share} from 'react-native';
 import {Font, ThemeMode, Type, useThemeStore} from '../theme';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {useMeshService} from '../store/meshService';
+import {POWER_PROFILES, PowerMode, useMeshService} from '../store/meshService';
 import {useIdentityStore} from '../store/identityStore';
 import {dbSetSetting} from '../db/database';
 import {formatLogTime, getLogLines} from '../utils/logBuffer';
@@ -10,12 +10,15 @@ import Avatar from '../ui/Avatar';
 import ListRow, {Section} from '../ui/ListRow';
 import Button from '../ui/Button';
 import {Icon} from '../ui/Icon';
+import {MESH_TIPS, MESH_TIPS_TITLE} from '../ui/meshStatus';
 
 const MODES: {mode: ThemeMode; label: string}[] = [
   {mode: 'system', label: 'Auto'},
   {mode: 'light', label: 'Light'},
   {mode: 'dark', label: 'Dark'},
 ];
+
+const POWER_MODES: PowerMode[] = ['performance', 'balanced', 'saver'];
 
 export default function SettingsScreen() {
   const {theme: t, mode, setMode} = useThemeStore();
@@ -50,15 +53,7 @@ export default function SettingsScreen() {
     Share.share({message: report}).catch(() => undefined);
   };
 
-  const tips = () =>
-    Alert.alert(
-      "Can't see someone?",
-      '• Both phones need Aetheris open (or running in the background).\n' +
-        '• Turn on Bluetooth and Location on both phones.\n' +
-        '• Stay within about 30 metres. Walls shorten the range.\n' +
-        '• Turn off battery saver for Aetheris in your phone settings.\n\n' +
-        'Messages to people who are away are kept and delivered when they come back nearby.',
-    );
+  const tips = () => Alert.alert(MESH_TIPS_TITLE, MESH_TIPS);
 
   return (
     <View style={{flex: 1, backgroundColor: t.bg}}>
@@ -100,19 +95,38 @@ export default function SettingsScreen() {
         </Section>
 
         <Section title="Battery">
+          <View style={styles.segmentWrap}>
+            <View accessibilityRole="radiogroup" style={[styles.segment, {backgroundColor: t.surfaceAlt}]}>
+              {POWER_MODES.map(m => {
+                const on = mesh.powerMode === m;
+                return (
+                  <Pressable
+                    key={m}
+                    accessibilityRole="radio"
+                    accessibilityState={{checked: on}}
+                    onPress={() => mesh.setPowerMode(m)}
+                    style={[styles.segmentItem, on && {backgroundColor: t.bg}]}>
+                    <Text style={[styles.segmentText, {color: on ? t.text : t.textSub}]}>{POWER_PROFILES[m].label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={[styles.profileSub, {color: t.textMuted, paddingHorizontal: 8, paddingTop: 8}]}>
+              {POWER_PROFILES[mesh.powerMode].description}
+            </Text>
+          </View>
+        </Section>
+
+        <Section title="Mesh">
           <ListRow
-            icon="battery-half-outline"
-            iconColor="#17C964"
-            title="Save battery"
-            subtitle="Looks for people less often. New people may take a minute to appear."
-            right={
-              <Switch
-                value={mesh.powerMode === 'saver'}
-                onValueChange={on => mesh.setPowerMode(on ? 'saver' : 'balanced')}
-                trackColor={{false: t.surfaceAlt, true: t.primary}}
-                thumbColor="#FFFFFF"
-              />
+            icon="git-network-outline"
+            iconColor="#7C3AED"
+            title={
+              mesh.carryingForOthers === 0
+                ? 'Not carrying anything for others right now'
+                : `Carrying ${mesh.carryingForOthers} ${mesh.carryingForOthers === 1 ? 'message' : 'messages'} for others`
             }
+            subtitle="Your phone passes these on when it meets someone who can deliver them. They're encrypted, so you can't read them. Uses a little battery."
           />
         </Section>
 
@@ -161,7 +175,7 @@ const styles = StyleSheet.create({
   profileSub: {fontFamily: Font.regular, fontSize: 13, marginTop: 3},
   segmentWrap: {padding: 8},
   segment: {flexDirection: 'row', borderRadius: 12, padding: 3},
-  segmentItem: {flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 10},
+  segmentItem: {flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 48, paddingVertical: 9, borderRadius: 10},
   segmentText: {fontFamily: Font.semiBold, fontSize: 14},
   about: {fontFamily: Font.regular, fontSize: 12.5, lineHeight: 18, textAlign: 'center', paddingHorizontal: 40, marginTop: 28},
   backdrop: {flex: 1, justifyContent: 'center', padding: 24},

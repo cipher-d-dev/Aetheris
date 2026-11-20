@@ -12,6 +12,7 @@ import {Icon} from '../ui/Icon';
 import {statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
 import Button from '../ui/Button';
+import {MESH_TIPS, MESH_TIPS_TITLE, meshStatusLine} from '../ui/meshStatus';
 import {formatListTime, isNearby} from '../ui/presence';
 
 function ChatRow({item, nearby, onPress, onLongPress}: {
@@ -81,46 +82,39 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
 function StatusLine() {
   const {theme: t} = useThemeStore();
   const identity = useIdentityStore(s => s.identity);
-  const {status, permission, bluetoothOn, routes, bootstrap} = useMeshService();
+  const {status, permission, bluetoothOn, routes, error, errorCode, bootstrap} = useMeshService();
 
-  let problem: {text: string; action: string; onPress: () => void} | null = null;
-  if (permission === 'blocked') {
-    problem = {text: 'Aetheris needs access to nearby devices.', action: 'Settings', onPress: () => openSettings()};
-  } else if (permission === 'denied') {
-    problem = {
-      text: 'Allow access to find people nearby.',
-      action: 'Allow',
-      onPress: () => identity && bootstrap(identity.publicKeyBase58),
-    };
-  } else if (!bluetoothOn) {
-    problem = {
-      text: 'Turn on Bluetooth to reach people nearby.',
-      action: 'Retry',
-      onPress: () => identity && bootstrap(identity.publicKeyBase58),
-    };
-  }
+  const line = meshStatusLine({status, permission, bluetoothOn, error, errorCode, routeCount: routes.length});
+  const retry = () => identity && bootstrap(identity.publicKeyBase58);
 
-  if (problem) {
+  if (line.tone === 'warning') {
+    const permissionProblem = permission === 'blocked' || permission === 'denied' || !bluetoothOn;
+    const showHelp = () =>
+      Alert.alert(
+        line.text,
+        `${error ?? 'Unknown error'}\n\n${MESH_TIPS_TITLE}\n${MESH_TIPS}`,
+        // Start returns early while running, so a radio error has nothing to retry.
+        status === 'error' ? [{text: 'Close', style: 'cancel'}, {text: 'Try again', onPress: retry}] : [{text: 'OK'}],
+      );
+    const action = permission === 'blocked' ? 'Settings' : permissionProblem ? (permission === 'denied' ? 'Allow' : 'Retry') : 'Help';
+    const onPress = permission === 'blocked' ? () => openSettings() : permissionProblem ? retry : showHelp;
     return (
-      <Pressable onPress={problem.onPress} style={[styles.problem, {backgroundColor: t.warningSoft}]}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`${line.text}. ${action}`}
+        style={[styles.problem, {backgroundColor: t.warningSoft}]}>
         <Icon name="alert-circle" size={18} color={t.warningText} />
-        <Text style={[styles.problemText, {color: t.warningText}]}>{problem.text}</Text>
-        <Text style={[styles.problemAction, {color: t.warningText}]}>{problem.action}</Text>
+        <Text style={[styles.problemText, {color: t.warningText}]}>{line.text}</Text>
+        <Text style={[styles.problemAction, {color: t.warningText}]}>{action}</Text>
       </Pressable>
     );
   }
 
-  const count = routes.length;
   return (
     <View style={styles.status}>
-      <View style={[styles.statusDot, {backgroundColor: count > 0 ? t.online : t.textMuted}]} />
-      <Text style={[styles.statusText, {color: t.textSub}]}>
-        {status !== 'running'
-          ? 'Starting…'
-          : count === 0
-          ? 'Looking for people nearby…'
-          : `${count} ${count === 1 ? 'person' : 'people'} nearby`}
-      </Text>
+      <View style={[styles.statusDot, {backgroundColor: routes.length > 0 ? t.online : t.textMuted}]} />
+      <Text style={[styles.statusText, {color: t.textSub}]}>{line.text}</Text>
     </View>
   );
 }

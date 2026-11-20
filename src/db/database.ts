@@ -333,6 +333,14 @@ export function dbGroupDeliveryCounts(messageId: string): {delivered: number; to
   return {delivered: r?.d ?? 0, total: r?.t ?? 0};
 }
 
+/** Per-member delivery state of a group message, for naming who is still waiting. */
+export function dbGroupDeliveries(messageId: string): {memberId: string; delivered: boolean}[] {
+  return rows('SELECT member_id, delivered FROM group_deliveries WHERE message_id = ?', [messageId]).map(r => ({
+    memberId: r.member_id,
+    delivered: !!r.delivered,
+  }));
+}
+
 // ─── Mesh store (dedup cache + carried messages) ─────────────────────────────
 
 export const dbMeshStore: MeshStore = {

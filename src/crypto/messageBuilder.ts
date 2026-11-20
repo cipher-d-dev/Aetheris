@@ -13,7 +13,7 @@ import {loadPrivateKey} from './identity';
 
 const PROTOCOL_VERSION = 1;
 const DEFAULT_TTL = 16;
-const MESSAGE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
+export const MESSAGE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
 
 /**
  * Build, encrypt, and sign a new outbound message.
