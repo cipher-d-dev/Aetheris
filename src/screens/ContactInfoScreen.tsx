@@ -49,7 +49,7 @@ export default function ContactInfoScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: () => {
-          useMessagesStore.getState().deleteConversation(conversationId);
+          useMeshService.getState().deleteConversation(conversationId);
           navigation.popToTop();
         },
       },

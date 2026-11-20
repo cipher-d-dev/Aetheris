@@ -6,7 +6,6 @@
  */
 import {create} from 'zustand';
 import {
-  dbDeleteConversation,
   dbGetConversation,
   dbGetGroup,
   dbGetPeer,
@@ -82,7 +81,8 @@ interface MessagesState {
   setActiveConversation: (id: string | null) => void;
   /** Re-read a conversation (and the list) from the DB after a change. */
   refresh: (conversationId?: string) => void;
-  deleteConversation: (conversationId: string) => void;
+  /** Drop a conversation from state only; the DB delete lives in meshService.deleteConversation. */
+  dropConversation: (conversationId: string) => void;
 }
 
 export const useMessagesStore = create<MessagesState>((set, get) => ({
@@ -142,12 +142,7 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
     get().loadConversations();
   },
 
-  deleteConversation: conversationId => {
-    try {
-      dbDeleteConversation(conversationId);
-    } catch (e) {
-      console.warn('[messagesStore] deleteConversation failed', e);
-    }
+  dropConversation: conversationId => {
     set(state => {
       const messages = {...state.messages};
       delete messages[conversationId];

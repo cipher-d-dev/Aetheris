@@ -5,6 +5,7 @@
 import {open, QuickSQLiteConnection} from 'react-native-quick-sqlite';
 import {CREATE_TABLES_SQL} from './schema';
 import {GroupInfo, MediaAttachment, MessageStatus, ContentKind} from '../types/message';
+import {MESSAGE_TTL_MS} from '../crypto/messageBuilder';
 import type {CarryRecord, MeshStore} from '../mesh/meshNode';
 
 const SCHEMA_VERSION = 2;
@@ -42,9 +43,11 @@ export async function initDatabase(): Promise<void> {
   run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   ensureColumn('peers', 'verified', 'INTEGER DEFAULT 0');
   ensureColumn('peers', 'nickname', 'TEXT');
+  ensureColumn('group_deliveries', 'expired', 'INTEGER DEFAULT 0');
 
   run('DELETE FROM seen_message_ids WHERE seen_at < ?', [Date.now() - SEEN_RETENTION_MS]);
   run('DELETE FROM carried_messages WHERE expires_at < ?', [Date.now()]);
+  dbExpireOverdueOutbound(Date.now());
 }
 
 function ensureColumn(table: string, column: string, definition: string): void {
@@ -176,8 +179,23 @@ export function dbDeleteMessage(id: string): string[] {
   return subs;
 }
 
-export function dbDeleteConversation(conversationId: string): void {
+/** Delete a conversation on this phone. Returns the ids of in-flight messages (and group sub-IDs) to cancel. */
+export function dbDeleteConversation(conversationId: string): string[] {
+  const ids = rows(
+    `SELECT id FROM messages WHERE conversation_id = ? AND is_outbound = 1 AND status IN ('pending','sent')`,
+    [conversationId],
+  ).map(r => r.id);
+  const subs = rows(
+    `SELECT sub_id FROM group_deliveries
+      WHERE delivered = 0 AND message_id IN (SELECT id FROM messages WHERE conversation_id = ?)`,
+    [conversationId],
+  ).map(r => r.sub_id);
+  run(
+    'DELETE FROM group_deliveries WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ?)',
+    [conversationId],
+  );
   run('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
+  return [...ids, ...subs];
 }
 
 /** Our own messages that are still waiting for an ACK (for UI only). */
@@ -334,11 +352,50 @@ export function dbGroupDeliveryCounts(messageId: string): {delivered: number; to
 }
 
 /** Per-member delivery state of a group message, for naming who is still waiting. */
-export function dbGroupDeliveries(messageId: string): {memberId: string; delivered: boolean}[] {
-  return rows('SELECT member_id, delivered FROM group_deliveries WHERE message_id = ?', [messageId]).map(r => ({
+export function dbGroupDeliveries(messageId: string): {memberId: string; delivered: boolean; expired: boolean}[] {
+  return rows('SELECT member_id, delivered, expired FROM group_deliveries WHERE message_id = ?', [messageId]).map(r => ({
     memberId: r.member_id,
     delivered: !!r.delivered,
+    expired: !!r.expired,
   }));
+}
+
+/**
+ * Marks one per-member copy as expired and reports whether the group message
+ * as a whole has failed: every copy is delivered or expired, and none delivered.
+ * A partly delivered message keeps its status ("sent").
+ */
+export function dbExpireGroupCopy(subId: string): {parent: string | null; failed: boolean} {
+  run('UPDATE group_deliveries SET expired = 1 WHERE sub_id = ? AND delivered = 0', [subId]);
+  const parent = dbGroupParent(subId);
+  if (!parent) return {parent: null, failed: false};
+  return {parent, failed: groupFailed(parent)};
+}
+
+function groupFailed(messageId: string): boolean {
+  const r = rows(
+    `SELECT COUNT(*) AS t, SUM(delivered) AS d, SUM(CASE WHEN delivered = 0 AND expired = 1 THEN 1 ELSE 0 END) AS e
+       FROM group_deliveries WHERE message_id = ?`,
+    [messageId],
+  )[0];
+  return !!r && r.t > 0 && !r.d && r.e === r.t;
+}
+
+/**
+ * Startup sweep: outbound messages past their lifetime that expired while the
+ * app was closed. Group copies are marked expired, and the parent fails only
+ * if nothing was delivered.
+ */
+export function dbExpireOverdueOutbound(now: number): void {
+  const overdue = rows(
+    "SELECT id FROM messages WHERE is_outbound = 1 AND status IN ('pending', 'sent') AND created_at < ?",
+    [now - MESSAGE_TTL_MS],
+  );
+  for (const {id} of overdue) {
+    run('UPDATE group_deliveries SET expired = 1 WHERE message_id = ? AND delivered = 0', [id]);
+    const isGroup = rows('SELECT 1 AS x FROM group_deliveries WHERE message_id = ?', [id]).length > 0;
+    if (!isGroup || groupFailed(id)) dbUpdateMessageStatus(id, 'failed');
+  }
 }
 
 // ─── Mesh store (dedup cache + carried messages) ─────────────────────────────

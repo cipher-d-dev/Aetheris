@@ -383,12 +383,15 @@ export default function ChatScreen() {
       name: title,
       now: Date.now(),
       isGroup,
-      waitingNames: isGroup
-        ? dbGroupDeliveries(m.id)
-            .filter(d => !d.delivered)
-            .map(d => displayName(d.memberId))
-        : [],
+      ...(isGroup ? groupNames(m.id) : {}),
     });
+  const groupNames = (messageId: string) => {
+    const pending = dbGroupDeliveries(messageId).filter(d => !d.delivered);
+    return {
+      waitingNames: pending.filter(d => !d.expired).map(d => displayName(d.memberId)),
+      missedNames: pending.filter(d => d.expired).map(d => displayName(d.memberId)),
+    };
+  };
 
   const info = (m: ChatMessage) => {
     const routeLine = routeText(m.route, m.isOutbound, selfId, id => displayName(id));

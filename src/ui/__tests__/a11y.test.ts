@@ -58,3 +58,16 @@ describe('deliveryExplanation', () => {
     expect(deliveryExplanation({...base, isOutbound: false, status: 'pending'}, {name: 'Bob', now})).toBeNull();
   });
 });
+
+describe('deliveryExplanation for partly expired groups', () => {
+  const {deliveryExplanation} = require('../a11y');
+  const base = {isOutbound: true, createdAt: 0, deliveredCount: 1, recipientCount: 3};
+  it('says who it never reached when nothing is still being tried', () => {
+    const text = deliveryExplanation({...base, status: 'sent'}, {name: 'G', now: 1, isGroup: true, missedNames: ['Ana', 'Bob']});
+    expect(text).toBe("Delivered to 1 of 3. Didn't reach Ana and Bob within 72 hours.");
+  });
+  it('separates missed members from ones still waiting', () => {
+    const text = deliveryExplanation({...base, status: 'sent'}, {name: 'G', now: 1, isGroup: true, missedNames: ['Ana'], waitingNames: ['Bob']});
+    expect(text).toMatch(/^Delivered to 1 of 3\. Didn't reach Ana within 72 hours\. Still waiting for Bob\./);
+  });
+});
