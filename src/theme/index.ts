@@ -24,69 +24,107 @@ export const Type = {
 };
 
 // ─── Palettes ─────────────────────────────────────────────────────────────────
+// Aetheris's own palette on a familiar messenger layout: neutral surfaces, one
+// iris-violet accent, violet-tinted bubbles for your messages and a quiet,
+// original patterned wallpaper.
 
 export const lightTheme = {
   isDark: false,
   bg: '#FFFFFF',
-  surface: '#F5F6F8',
-  surfaceAlt: '#ECEEF2',
-  border: '#E8EAEE',
-  separator: '#EFF1F4',
+  surface: '#F1F1F6',
+  surfaceAlt: '#E7E7EF',
+  border: '#E3E3EC',
+  separator: '#EEEEF3',
 
-  primary: '#5B5BD6',
-  primaryPressed: '#4F4FC4',
-  primarySoft: '#EEEEFC',
+  primary: '#5A4FDB',
+  primaryPressed: '#4C42C4',
+  primarySoft: '#ECEAFD',
+  /** Accent used for text/icons on bg (darker than primary for contrast) */
+  primaryText: '#4D43CC',
   onPrimary: '#FFFFFF',
 
-  text: '#0F1419',
-  textSub: '#5B6573',
-  textMuted: '#8C96A3',
+  text: '#14141F',
+  textSub: '#565870',
+  textMuted: '#6B6D84',
 
-  chatBg: '#F2F3F7',
-  bubbleOut: '#5B5BD6',
-  bubbleOutText: '#FFFFFF',
-  bubbleOutMeta: 'rgba(255,255,255,0.9)', // 4.7:1 on bubbleOut
+  chip: '#FFFFFF',
+  chipBorder: '#DCDCE6',
+  chipOn: '#ECEAFD',
+  chipOnText: '#3F36B3',
+
+  tabPill: '#ECEAFD',
+  tickRead: '#5A4FDB',
+
+  chatBg: '#EFEFF6',
+  wallpaperTint: '#6A66A0',
+  wallpaperOpacity: 0.08,
+  chatHeader: '#FFFFFF',
+  bubbleOut: '#E3E0FF',
+  bubbleOutText: '#14141F',
+  bubbleOutMeta: '#575573',
   bubbleIn: '#FFFFFF',
-  bubbleInText: '#0F1419',
-  bubbleInMeta: '#6B7480', // 4.7:1 on bubbleIn
+  bubbleInText: '#14141F',
+  bubbleInMeta: '#696B80',
+  quoteOut: 'rgba(90,79,219,0.10)',
+  quoteIn: '#F1F1F6',
+  quoteBar: '#5A4FDB',
+  quoteName: '#4D43CC',
+  bubbleShadow: true,
 
-  online: '#22C55E',
+  online: '#1FB45A',
   danger: '#E5484D',
   dangerSoft: '#FDECEC',
-  warningSoft: '#FFF6E5',
-  warningText: '#A35200',
-  overlay: 'rgba(15,20,25,0.45)',
-  shadow: '#0F1419',
+  warningSoft: '#FFF4DE',
+  warningText: '#8A4B00',
+  overlay: 'rgba(11,20,26,0.45)',
+  shadow: '#0B141A',
 };
 
 export type AppTheme = typeof lightTheme;
 
 export const darkTheme: AppTheme = {
   isDark: true,
-  bg: '#0E0F13',
-  surface: '#17181E',
-  surfaceAlt: '#202129',
-  border: '#26272F',
-  separator: '#1D1E25',
+  bg: '#0E0F15',
+  surface: '#1A1B24',
+  surfaceAlt: '#23242F',
+  border: '#2A2B37',
+  separator: '#191A22',
 
-  primary: '#7C7CF0',
-  primaryPressed: '#6C6CE0',
-  primarySoft: '#23233F',
-  onPrimary: '#FFFFFF',
+  primary: '#8C82FF',
+  primaryPressed: '#7A70F0',
+  primarySoft: '#262350',
+  primaryText: '#A9A2FF',
+  onPrimary: '#110D35',
 
-  text: '#EEEFF2',
-  textSub: '#A3A7B3',
-  textMuted: '#6F7482',
+  text: '#ECECF3',
+  textSub: '#A2A3B5',
+  textMuted: '#80829A',
 
-  chatBg: '#0A0B0E',
-  bubbleOut: '#5B5BD6',
-  bubbleOutText: '#FFFFFF',
-  bubbleOutMeta: 'rgba(255,255,255,0.9)', // 4.7:1 on bubbleOut
-  bubbleIn: '#1C1D24',
-  bubbleInText: '#EEEFF2',
-  bubbleInMeta: '#8E94A3', // 5.5:1 on bubbleIn
+  chip: 'transparent',
+  chipBorder: '#2E2F3C',
+  chipOn: '#262350',
+  chipOnText: '#C6C1FF',
 
-  online: '#34D399',
+  tabPill: '#262350',
+  tickRead: '#B9B3FF',
+
+  chatBg: '#0B0C11',
+  wallpaperTint: '#FFFFFF',
+  wallpaperOpacity: 0.045,
+  chatHeader: '#13141B',
+  bubbleOut: '#36318A',
+  bubbleOutText: '#F1F0FF',
+  bubbleOutMeta: '#C4C0F0',
+  bubbleIn: '#1E1F29',
+  bubbleInText: '#ECECF3',
+  bubbleInMeta: '#A2A3B5',
+  quoteOut: 'rgba(0,0,0,0.22)',
+  quoteIn: 'rgba(255,255,255,0.05)',
+  quoteBar: '#A9A2FF',
+  quoteName: '#B9B3FF',
+  bubbleShadow: false,
+
+  online: '#3DDC84',
   danger: '#FF6369',
   dangerSoft: '#2C1416',
   warningSoft: '#2B2111',

@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
-import {View, Text, StyleSheet, FlatList, Pressable, TextInput, Alert} from 'react-native';
+import {View, Text, StyleSheet, FlatList, Pressable, TextInput, Alert, ScrollView} from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {openSettings} from 'react-native-permissions';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -11,7 +11,8 @@ import {useIdentityStore} from '../store/identityStore';
 import Avatar from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
 import {statusLabel} from '../ui/a11y';
-import IconButton from '../ui/IconButton';
+import Chip from '../ui/Chip';
+import {displayName} from '../store/messagesStore';
 import Button from '../ui/Button';
 import {MESH_TIPS, MESH_TIPS_TITLE, meshStatusLine} from '../ui/meshStatus';
 import {formatListTime, isNearby} from '../ui/presence';
@@ -30,13 +31,13 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
       onPress={onPress}
       onLongPress={onLongPress}
       style={({pressed}) => [styles.row, pressed && {backgroundColor: t.surface}]}>
-      <Avatar id={item.id} name={item.title} size={54} online={nearby} group={item.isGroup} />
+      <Avatar id={item.id} name={item.title} size={52} online={nearby} group={item.isGroup} />
       <View style={styles.rowBody}>
         <View style={styles.rowLine}>
           <Text style={[styles.name, {color: t.text}]} numberOfLines={1}>
             {item.title}
           </Text>
-          <Text style={[styles.time, {color: unread ? t.primary : t.textMuted}]}>
+          <Text style={[styles.time, {color: unread ? t.primaryText : t.textMuted}]}>
             {item.lastTime ? formatListTime(item.lastTime) : ''}
           </Text>
         </View>
@@ -56,7 +57,7 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
               size={16}
               color={
                 item.lastOutboundStatus === 'delivered'
-                  ? t.primary
+                  ? t.tickRead
                   : item.lastOutboundStatus === 'failed'
                   ? t.danger
                   : t.textMuted
@@ -69,7 +70,7 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
             numberOfLines={1}>
             {draft?.trim() ? (
               <>
-                <Text style={{color: t.primary}}>Draft: </Text>
+                <Text style={{color: t.primaryText, fontFamily: Font.semiBold}}>Draft: </Text>
                 {draft.trim()}
               </>
             ) : (
@@ -78,7 +79,7 @@ function ChatRow({item, nearby, onPress, onLongPress}: {
           </Text>
           {unread && (
             <View style={[styles.badge, {backgroundColor: t.primary}]}>
-              <Text style={styles.badgeText}>{item.unread > 99 ? '99+' : item.unread}</Text>
+              <Text style={[styles.badgeText, {color: t.onPrimary}]}>{item.unread > 99 ? '99+' : item.unread}</Text>
             </View>
           )}
         </View>
@@ -120,13 +121,27 @@ function StatusLine() {
     );
   }
 
+  return null;
+}
+
+/** Compact "● 4 nearby" pill in the header. */
+function NearbyPill() {
+  const {theme: t} = useThemeStore();
+  const {status, routes} = useMeshService();
+  const n = routes.length;
+  const text = status !== 'running' ? 'Starting…' : n === 0 ? 'Looking…' : `${n} nearby`;
   return (
-    <View style={styles.status}>
-      <View style={[styles.statusDot, {backgroundColor: routes.length > 0 ? t.online : t.textMuted}]} />
-      <Text style={[styles.statusText, {color: t.textSub}]}>{line.text}</Text>
+    <View
+      accessible
+      accessibilityLabel={status !== 'running' ? 'Starting' : n === 0 ? 'Looking for people nearby' : `${n} ${n === 1 ? 'person' : 'people'} nearby`}
+      style={[styles.pill, {backgroundColor: t.surface}]}>
+      <View style={[styles.statusDot, {backgroundColor: n > 0 ? t.online : t.textMuted}]} />
+      <Text style={[styles.pillText, {color: t.textSub}]}>{text}</Text>
     </View>
   );
 }
+
+type Filter = 'all' | 'unread' | 'nearby' | 'groups';
 
 export default function ChatsScreen() {
   const {theme: t} = useThemeStore();
@@ -137,13 +152,21 @@ export default function ChatsScreen() {
   const {deleteConversation} = useMeshService.getState();
   const routes = useMeshService(s => s.routes);
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
 
   useEffect(() => navigation.addListener('focus', loadConversations), [navigation, loadConversations]);
 
+  const unreadChats = conversations.filter(c => c.unread > 0).length;
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? conversations.filter(c => c.title.toLowerCase().includes(q)) : conversations;
-  }, [conversations, query]);
+    return conversations.filter(c => {
+      if (q && !c.title.toLowerCase().includes(q)) return false;
+      if (filter === 'unread') return c.unread > 0;
+      if (filter === 'groups') return c.isGroup;
+      if (filter === 'nearby') return !c.isGroup && isNearby(c.id, routes);
+      return true;
+    });
+  }, [conversations, query, filter, routes]);
 
   const confirmDelete = (c: Conversation) =>
     Alert.alert(`Delete chat with ${c.title}?`, 'Messages are deleted from this phone.', [
@@ -151,53 +174,108 @@ export default function ChatsScreen() {
       {text: 'Delete', style: 'destructive', onPress: () => deleteConversation(c.id)},
     ]);
 
-  return (
-    <View style={[styles.container, {backgroundColor: t.bg}]}>
-      <View style={[styles.header, {paddingTop: insets.top + 56}]}>
-        <Text style={[Type.largeTitle, {color: t.text}]}>Chats</Text>
-        <IconButton accessibilityLabel="New message" name="create-outline" onPress={() => navigation.navigate('NewMessage')} />
-      </View>
-      <StatusLine />
+  const openChat = (id: string) => navigation.navigate('Chat', {conversationId: id});
 
-      {conversations.length > 0 && (
+  const header = (
+    <View>
+      <View style={[styles.searchWrap]}>
         <View style={[styles.search, {backgroundColor: t.surface}]}>
-          <Icon name="search" size={18} color={t.textMuted} />
+          <Icon name="search" size={20} color={t.textMuted} />
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="Search"
+            placeholder="Search chats"
             placeholderTextColor={t.textMuted}
+            accessibilityLabel="Search chats"
             style={[styles.searchInput, {color: t.text}]}
           />
+          {query ? (
+            <Pressable accessibilityRole="button" accessibilityLabel="Clear search" hitSlop={10} onPress={() => setQuery('')}>
+              <Icon name="close-circle" size={18} color={t.textMuted} />
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+      <StatusLine />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+        <Chip label="All" on={filter === 'all'} onPress={() => setFilter('all')} />
+        <Chip label="Unread" count={unreadChats || undefined} on={filter === 'unread'} onPress={() => setFilter('unread')} />
+        <Chip label="Nearby" on={filter === 'nearby'} onPress={() => setFilter('nearby')} />
+        <Chip label="Groups" on={filter === 'groups'} onPress={() => setFilter('groups')} />
+      </ScrollView>
+      {filter === 'all' && !query && routes.length > 0 && (
+        <View style={styles.nearbyBlock}>
+          <Text style={[styles.sectionLabel, {color: t.textMuted}]}>Nearby now</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nearbyRow}>
+            {routes.map(r => {
+              const name = displayName(r.id, r.alias);
+              return (
+                <Pressable
+                  key={r.id}
+                  onPress={() => openChat(r.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Message ${name}, nearby`}
+                  style={({pressed}) => [styles.nearbyItem, pressed && {opacity: 0.7}]}>
+                  <View style={[styles.ring, {borderColor: t.primary}]}>
+                    <Avatar id={r.id} name={name} size={54} />
+                  </View>
+                  <Text numberOfLines={1} style={[styles.nearbyName, {color: t.text}]}>
+                    {name.split(' ')[0]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
       )}
+    </View>
+  );
+
+  return (
+    <View style={[styles.container, {backgroundColor: t.bg}]}>
+      <View style={[styles.header, {paddingTop: insets.top + 14}]}>
+        <Text style={[styles.title, {color: t.text}]} accessibilityRole="header">
+          Aetheris
+        </Text>
+        <NearbyPill />
+      </View>
 
       {conversations.length === 0 ? (
-        <View style={styles.empty}>
-          <View style={[styles.emptyArt, {backgroundColor: t.primarySoft}]}>
-            <Icon name="chatbubbles" size={48} color={t.primary} />
+        <>
+          {header}
+          <View style={styles.empty}>
+            <View style={[styles.emptyArt, {backgroundColor: t.primarySoft}]}>
+              <Icon name="chatbubbles" size={46} color={t.primaryText} />
+            </View>
+            <Text style={[Type.title, {color: t.text, textAlign: 'center'}]}>Start a conversation</Text>
+            <Text style={[styles.emptyText, {color: t.textSub}]}>
+              Message anyone around you who has Aetheris. No internet or phone number needed.
+            </Text>
+            <Button
+              title="Find people nearby"
+              icon="people"
+              onPress={() => navigation.navigate('NewMessage')}
+              style={{marginTop: 24, alignSelf: 'stretch'}}
+            />
           </View>
-          <Text style={[Type.title, {color: t.text, textAlign: 'center'}]}>No chats yet</Text>
-          <Text style={[styles.emptyText, {color: t.textSub}]}>
-            Message anyone around you who has Aetheris — no internet needed.
-          </Text>
-          <Button
-            title="Find people nearby"
-            icon="people"
-            onPress={() => navigation.navigate('NewMessage')}
-            style={{marginTop: 24, alignSelf: 'stretch'}}
-          />
-        </View>
+        </>
       ) : (
         <FlatList
           data={shown}
           keyExtractor={c => c.id}
-          contentContainerStyle={{paddingBottom: 100}}
+          ListHeaderComponent={header}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{paddingBottom: 110}}
+          ListEmptyComponent={
+            <Text style={[styles.noMatch, {color: t.textMuted}]}>
+              {query ? `No chats match "${query.trim()}"` : filter === 'unread' ? "You're all caught up" : filter === 'nearby' ? 'No one you chat with is nearby right now' : 'No group chats yet'}
+            </Text>
+          }
           renderItem={({item}) => (
             <ChatRow
               item={item}
               nearby={!item.isGroup && isNearby(item.id, routes)}
-              onPress={() => navigation.navigate('Chat', {conversationId: item.id})}
+              onPress={() => openChat(item.id)}
               onLongPress={() => confirmDelete(item)}
             />
           )}
@@ -211,9 +289,9 @@ export default function ChatsScreen() {
           onPress={() => navigation.navigate('NewMessage')}
           style={({pressed}) => [
             styles.fab,
-            {backgroundColor: pressed ? t.primaryPressed : t.primary, shadowColor: t.primary},
+            {backgroundColor: pressed ? t.primaryPressed : t.primary, shadowColor: t.shadow},
           ]}>
-          <Icon name="chatbubbles" size={24} color={t.onPrimary} />
+          <Icon name="create" size={24} color={t.onPrimary} />
         </Pressable>
       )}
     </View>
@@ -222,29 +300,39 @@ export default function ChatsScreen() {
 
 const styles = StyleSheet.create({
   container: {flex: 1},
-  header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20},
-  status: {flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 20, marginTop: 2, marginBottom: 14},
+  header: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 10},
+  title: {fontFamily: Font.extraBold, fontSize: 27, letterSpacing: -0.6},
+  pill: {flexDirection: 'row', alignItems: 'center', gap: 7, height: 32, paddingHorizontal: 12, borderRadius: 16},
+  pillText: {fontFamily: Font.semiBold, fontSize: 13},
   statusDot: {width: 8, height: 8, borderRadius: 4},
-  statusText: {fontFamily: Font.medium, fontSize: 13.5},
-  problem: {flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 6, marginBottom: 14, padding: 12, borderRadius: 14},
+  problem: {flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginBottom: 10, padding: 12, borderRadius: 14},
   problemText: {flex: 1, fontFamily: Font.medium, fontSize: 13.5},
   problemAction: {fontFamily: Font.bold, fontSize: 13.5},
-  search: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 6, paddingHorizontal: 14, height: 42, borderRadius: 14},
-  searchInput: {flex: 1, fontFamily: Font.regular, fontSize: 15, paddingVertical: 0},
+  searchWrap: {paddingHorizontal: 16, paddingBottom: 12},
+  search: {flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, height: 48, borderRadius: 24},
+  searchInput: {flex: 1, fontFamily: Font.regular, fontSize: 16, paddingVertical: 0},
+  chips: {flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 6},
+  nearbyBlock: {paddingTop: 12, paddingBottom: 4},
+  sectionLabel: {fontFamily: Font.semiBold, fontSize: 13, paddingHorizontal: 20, paddingBottom: 10},
+  nearbyRow: {gap: 6, paddingHorizontal: 12},
+  nearbyItem: {width: 72, alignItems: 'center', gap: 6},
+  ring: {borderWidth: 2, borderRadius: 32, padding: 2},
+  nearbyName: {fontFamily: Font.medium, fontSize: 12.5, maxWidth: 70},
   row: {flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 10},
-  rowBody: {flex: 1, gap: 3},
+  rowBody: {flex: 1, gap: 4},
   rowLine: {flexDirection: 'row', alignItems: 'center', gap: 8},
   name: {flex: 1, fontFamily: Font.semiBold, fontSize: 16.5},
   time: {fontFamily: Font.medium, fontSize: 12},
   preview: {flex: 1, fontFamily: Font.regular, fontSize: 14.5},
   badge: {minWidth: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6},
-  badgeText: {color: '#fff', fontFamily: Font.bold, fontSize: 11.5},
+  badgeText: {fontFamily: Font.bold, fontSize: 11.5},
+  noMatch: {fontFamily: Font.medium, fontSize: 14, textAlign: 'center', paddingTop: 40, paddingHorizontal: 30},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36, paddingBottom: 80},
-  emptyArt: {width: 108, height: 108, borderRadius: 54, alignItems: 'center', justifyContent: 'center', marginBottom: 22},
+  emptyArt: {width: 104, height: 104, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 22},
   emptyText: {fontFamily: Font.regular, fontSize: 15, lineHeight: 22, textAlign: 'center', marginTop: 8},
   fab: {
-    position: 'absolute', right: 20, bottom: 24, width: 60, height: 60, borderRadius: 20,
+    position: 'absolute', right: 18, bottom: 20, width: 58, height: 58, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
-    elevation: 6, shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: {width: 0, height: 6},
+    elevation: 5, shadowOpacity: 0.25, shadowRadius: 10, shadowOffset: {width: 0, height: 4},
   },
 });
