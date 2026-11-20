@@ -586,6 +586,7 @@ export const useMeshService = create<MeshState>((set, get) => {
       set({carrying: node?.carryCount() ?? 0, carryingForOthers: node?.carryForOthersCount() ?? 0});
       useMessagesStore.getState().dropConversation(conversationId);
       useDraftsStore.getState().clearDraft(conversationId);
+      useDraftsStore.getState().setReply(conversationId, null);
     },
 
     retryMessage: async (messageId: string) => {

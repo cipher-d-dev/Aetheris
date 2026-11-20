@@ -3,10 +3,14 @@ import {AppState} from 'react-native';
 import {dbDeleteSetting, dbListSettings, dbSetSetting} from '../db/database';
 
 const PREFIX = 'draft:';
+const REPLY_PREFIX = 'reply:';
 const PERSIST_DELAY_MS = 500;
 
 interface DraftsState {
   drafts: Record<string, string>;
+  /** Id of the message each chat's composer is replying to. */
+  replies: Record<string, string>;
+  setReply: (conversationId: string, messageId: string | null) => void;
   setDraft: (conversationId: string, text: string) => void;
   clearDraft: (conversationId: string) => void;
   /** Write any pending drafts to the database right now. */
@@ -38,6 +42,24 @@ export const useDraftsStore = create<DraftsState>((set, get) => {
 
   return {
     drafts: {},
+    replies: {},
+
+    setReply: (id, messageId) => {
+      if ((get().replies[id] ?? null) === messageId) return;
+      set(s => {
+        const replies = {...s.replies};
+        if (messageId) replies[id] = messageId;
+        else delete replies[id];
+        return {replies};
+      });
+      // Rare and tiny, so it is saved straight away.
+      try {
+        if (messageId) dbSetSetting(REPLY_PREFIX + id, messageId);
+        else dbDeleteSetting(REPLY_PREFIX + id);
+      } catch (e) {
+        console.warn('[drafts] reply save failed', e);
+      }
+    },
 
     setDraft: (id, text) => {
       set(s => {
@@ -75,7 +97,15 @@ export const useDraftsStore = create<DraftsState>((set, get) => {
       } catch (e) {
         console.warn('[drafts] load failed', e);
       }
-      set({drafts});
+      const replies: Record<string, string> = {};
+      try {
+        for (const r of dbListSettings(REPLY_PREFIX)) {
+          if (r.value) replies[r.key.slice(REPLY_PREFIX.length)] = r.value;
+        }
+      } catch (e) {
+        console.warn('[drafts] reply load failed', e);
+      }
+      set({drafts, replies});
       // Android may kill the app once it is backgrounded.
       appStateSub ??= AppState.addEventListener('change', state => {
         if (state === 'background') get().flushDrafts();

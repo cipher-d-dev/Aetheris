@@ -31,7 +31,7 @@ import {
 import {MAX_MEDIA_BASE64, useMeshService} from '../store/meshService';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {requestMicrophone} from '../native/permissions';
-import {dbFindByRef, dbFirstUnread, dbGetGroup, dbGroupDeliveries} from '../db/database';
+import {dbFindByRef, dbFirstUnread, dbGetGroup, dbGetMessage, dbGroupDeliveries} from '../db/database';
 import {useDraftsStore} from '../store/draftsStore';
 import {useIdentityStore} from '../store/identityStore';
 import Avatar, {senderTextColor} from '../ui/Avatar';
@@ -329,7 +329,15 @@ export default function ChatScreen() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [menuFor, setMenuFor] = useState<ChatMessage | null>(null);
-  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  // A pending reply is kept per chat, like the draft, while its message still exists.
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(() => {
+    const id = useDraftsStore.getState().replies[conversationId];
+    const m = id ? dbGetMessage(id) : null;
+    return m && m.conversationId === conversationId ? m : null;
+  });
+  useEffect(() => {
+    useDraftsStore.getState().setReply(conversationId, replyingTo?.id ?? null);
+  }, [conversationId, replyingTo]);
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
   // Known before the first render (nothing is marked read yet), so a chat that
@@ -748,7 +756,14 @@ export default function ChatScreen() {
       onPress: () =>
         Alert.alert('Delete message?', 'It will be removed from this phone.', [
           {text: 'Cancel', style: 'cancel'},
-          {text: 'Delete', style: 'destructive', onPress: () => deleteMessage(m.id)},
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              setReplyingTo(cur => (cur?.id === m.id ? null : cur));
+              deleteMessage(m.id);
+            },
+          },
         ]),
     });
     return actions;
