@@ -76,8 +76,8 @@ interface PowerProfile {
 
 export const POWER_PROFILES: Record<PowerMode, PowerProfile> = {
   performance: {
-    label: 'Performance',
-    description: 'Scan non-stop. Fastest to find people, uses the most battery.',
+    label: 'Fastest',
+    description: 'Always looking for people. Finds them quickest, uses the most battery.',
     tickMs: 2_000,
     dutyAlone: [0, 0],
     dutyLinked: [0, 0],
@@ -85,15 +85,15 @@ export const POWER_PROFILES: Record<PowerMode, PowerProfile> = {
   },
   balanced: {
     label: 'Balanced',
-    description: 'Scan non-stop when alone, in bursts once connected.',
+    description: 'Looks all the time when no one is around, less often once you are connected.',
     tickMs: 3_000,
     dutyAlone: [0, 0],
     dutyLinked: [10_000, 30_000],
     mesh: {advertIntervalMs: 15_000},
   },
   saver: {
-    label: 'Battery saver',
-    description: 'Short scans every minute. Slower to find people.',
+    label: 'Saver',
+    description: 'Looks for people about once a minute. Saves battery, but people take longer to appear.',
     tickMs: 5_000,
     dutyAlone: [10_000, 30_000],
     dutyLinked: [5_000, 55_000],

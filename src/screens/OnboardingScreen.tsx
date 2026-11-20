@@ -48,7 +48,7 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
   if (step === 'name') {
     return (
       <KeyboardAvoidingView
-        style={[styles.container, {paddingTop: insets.top + 72, paddingBottom: 32 + (keyboardVisible ? 0 : insets.bottom), backgroundColor: t.bg}]}
+        style={[styles.container, {paddingTop: insets.top + 40, paddingBottom: 32 + (keyboardVisible ? 0 : insets.bottom), backgroundColor: t.bg}]}
         behavior={keyboardAvoidingBehavior()}>
         <View style={styles.top}>
           <Text style={[styles.brand, {color: t.primary}]}>Aetheris</Text>
@@ -83,7 +83,7 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
   }
 
   return (
-    <View style={[styles.container, {paddingTop: insets.top + 72, paddingBottom: 32 + insets.bottom, backgroundColor: t.bg}]}>
+    <View style={[styles.container, {paddingTop: insets.top + 40, paddingBottom: 32 + insets.bottom, backgroundColor: t.bg}]}>
       <View style={styles.top}>
         <View style={[styles.hero, {backgroundColor: t.primarySoft}]}>
           <Icon name="people" size={56} color={t.primary} />

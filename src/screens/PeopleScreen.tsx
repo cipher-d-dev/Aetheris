@@ -141,9 +141,9 @@ export default function PeopleScreen() {
 
   return (
     <View style={[styles.container, {backgroundColor: t.bg}]}>
-      <View style={[styles.header, asPicker && styles.headerModal, {paddingTop: insets.top + (asPicker ? 44 : 56)}]}>
+      <View style={[styles.header, asPicker && styles.headerModal, {paddingTop: insets.top + (asPicker ? 8 : 14)}]}>
         {asPicker && <IconButton accessibilityLabel="Close" name="close" onPress={() => navigation.goBack()} />}
-        <Text style={[asPicker ? Type.title : Type.largeTitle, {color: t.text, flex: 1}]}>
+        <Text accessibilityRole="header" style={[asPicker ? Type.title : styles.bigTitle, {color: t.text, flex: 1}]}>
           {asPicker ? 'New message' : 'People'}
         </Text>
       </View>
@@ -187,6 +187,7 @@ export default function PeopleScreen() {
 }
 
 const styles = StyleSheet.create({
+  bigTitle: {fontFamily: Font.extraBold, fontSize: 27, letterSpacing: -0.6},
   container: {flex: 1},
   header: {flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 20, paddingBottom: 10},
   headerModal: {paddingHorizontal: 8},
