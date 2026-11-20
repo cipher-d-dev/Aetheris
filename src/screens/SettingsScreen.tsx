@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
   profileSub: {fontFamily: Font.regular, fontSize: 13, marginTop: 3},
   segmentWrap: {padding: 8},
   segment: {flexDirection: 'row', borderRadius: 12, padding: 3},
-  segmentItem: {flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 10},
+  segmentItem: {flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 48, paddingVertical: 9, borderRadius: 10},
   segmentText: {fontFamily: Font.semiBold, fontSize: 14},
   about: {fontFamily: Font.regular, fontSize: 12.5, lineHeight: 18, textAlign: 'center', paddingHorizontal: 40, marginTop: 28},
   backdrop: {flex: 1, justifyContent: 'center', padding: 24},

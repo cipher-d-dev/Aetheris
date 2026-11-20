@@ -85,7 +85,7 @@ function Ticks({m, color, onPress}: {m: ChatMessage; color: string; onPress: () 
     );
   return (
     <Pressable
-      hitSlop={12}
+      hitSlop={16}
       accessibilityRole="button"
       accessibilityLabel={`${statusLabel(m.status)}, tap for details`}
       onPress={onPress}>
@@ -395,7 +395,7 @@ export default function ChatScreen() {
     const viaText = routeLine ? `\n\n${routeLine}` : '';
     const waiting = explain(m);
     let text: string;
-    if (waiting) text = `${waiting}${viaText}`;
+    if (waiting) text = `${m.status === 'failed' ? 'Not delivered. ' : ''}${waiting}${viaText}`;
     else if (!m.isOutbound) text = `Received at ${formatClock(m.createdAt)}.${viaText}`;
     else
       text = m.recipientCount

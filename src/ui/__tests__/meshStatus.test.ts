@@ -16,7 +16,7 @@ describe('meshStatusLine', () => {
   });
   it('shows a failed start', () => {
     expect(meshStatusLine({...base, status: 'error', error: 'boom'})).toEqual({
-      text: "Couldn't start. Tap for help",
+      text: "Couldn't start.",
       tone: 'warning',
       tappable: true,
     });

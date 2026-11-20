@@ -91,7 +91,7 @@ function StatusLine() {
     const permissionProblem = permission === 'blocked' || permission === 'denied' || !bluetoothOn;
     const showHelp = () =>
       Alert.alert(
-        line.text.replace(/\. Tap for help$/, ''),
+        line.text,
         `${error ?? 'Unknown error'}\n\n${MESH_TIPS_TITLE}\n${MESH_TIPS}`,
         // Start returns early while running, so a radio error has nothing to retry.
         status === 'error' ? [{text: 'Close', style: 'cancel'}, {text: 'Try again', onPress: retry}] : [{text: 'OK'}],

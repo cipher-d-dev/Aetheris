@@ -50,7 +50,7 @@ export function deliveryExplanation(
   if (!m.isOutbound || m.status === 'delivered') return null;
   const hours = Math.round(MESSAGE_TTL_MS / 3600000);
   if (m.status === 'failed') {
-    return `Not delivered: nobody reached ${isGroup ? nameList(waitingNames) || 'the group' : name} within ${hours} hours.`;
+    return `Nobody reached ${isGroup ? nameList(waitingNames) || 'the group' : name} within ${hours} hours.`;
   }
   const deadline = m.createdAt + MESSAGE_TTL_MS;
   const retry =

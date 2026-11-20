@@ -41,12 +41,12 @@ export function meshStatusLine(s: MeshStatusInput): MeshStatusLine {
     return {text: 'Turn on Bluetooth to reach people nearby.', tone: 'warning', tappable: true};
   }
   if (s.status === 'error') {
-    return {text: "Couldn't start. Tap for help", tone: 'warning', tappable: true};
+    return {text: "Couldn't start.", tone: 'warning', tappable: true};
   }
   if (s.status !== 'running') return {text: 'Starting…', tone: 'normal', tappable: false};
   if (s.error) {
     const text = (s.errorCode && RADIO_ERROR_LINES[s.errorCode]) || "Bluetooth isn't working properly";
-    return {text: `${text}. Tap for help`, tone: 'warning', tappable: true};
+    return {text: `${text}.`, tone: 'warning', tappable: true};
   }
   const n = s.routeCount;
   return {

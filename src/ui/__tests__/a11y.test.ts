@@ -46,11 +46,11 @@ describe('deliveryExplanation', () => {
 
   it('explains failures', () => {
     expect(deliveryExplanation({...base, status: 'failed'}, {name: 'Bob', now})).toBe(
-      `Not delivered: nobody reached Bob within ${hours} hours.`,
+      `Nobody reached Bob within ${hours} hours.`,
     );
     expect(
       deliveryExplanation({...base, status: 'failed'}, {name: 'G', now, isGroup: true, waitingNames: ['Ana', 'Bob']}),
-    ).toBe(`Not delivered: nobody reached Ana and Bob within ${hours} hours.`);
+    ).toBe(`Nobody reached Ana and Bob within ${hours} hours.`);
   });
 
   it('returns null for delivered and inbound messages', () => {
