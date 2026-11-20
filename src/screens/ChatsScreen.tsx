@@ -15,7 +15,7 @@ import {statusLabel} from '../ui/a11y';
 import Chip from '../ui/Chip';
 import {displayName} from '../store/messagesStore';
 import Button from '../ui/Button';
-import {MESH_TIPS, MESH_TIPS_TITLE, meshStatusLine} from '../ui/meshStatus';
+import {MESH_TIPS, meshStatusLine} from '../ui/meshStatus';
 import {formatListTime, isNearby} from '../ui/presence';
 
 function ChatRow({item, nearby, onPress, onLongPress}: {
@@ -104,7 +104,7 @@ function StatusLine() {
       showDialog(
         line.text,
         // The raw radio error is in Settings > Help > Send a problem report.
-        `${MESH_TIPS_TITLE}\n\n${MESH_TIPS}`,
+        MESH_TIPS,
         // Start returns early while running, so a radio error has nothing to retry.
         status === 'error' ? [{text: 'Close', style: 'cancel'}, {text: 'Try again', onPress: retry}] : [{text: 'Got it'}],
         {icon: 'help-buoy-outline', tone: 'warning'},
