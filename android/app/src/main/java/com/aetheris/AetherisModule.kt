@@ -307,7 +307,8 @@ class AetherisModule(private val reactContext: ReactApplicationContext) :
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val notification = NotificationCompat.Builder(reactContext, MESSAGE_CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setColor(0xFF5A4FDB.toInt())
                 .setContentTitle(title)
                 .setContentText(body)
                 .setAutoCancel(true)

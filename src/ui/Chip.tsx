@@ -26,6 +26,6 @@ export default function Chip({label, count, on, onPress}: {label: string; count?
 }
 
 const styles = StyleSheet.create({
-  chip: {height: 34, borderRadius: 17, borderWidth: 1, paddingHorizontal: 15, justifyContent: 'center'},
-  text: {fontFamily: Font.semiBold, fontSize: 13.5},
+  chip: {height: 30, borderRadius: 15, borderWidth: 1, paddingHorizontal: 13, justifyContent: 'center'},
+  text: {fontFamily: Font.semiBold, fontSize: 13},
 });

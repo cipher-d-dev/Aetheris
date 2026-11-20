@@ -27,7 +27,8 @@ class AetherisService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Aetheris is relaying")
             .setContentText("Passing messages between nearby phones.")
-            .setSmallIcon(R.mipmap.ic_launcher) // Use app icon
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFF5A4FDB.toInt())
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 

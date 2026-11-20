@@ -47,7 +47,7 @@ function Tabs() {
           <View style={[styles.pill, focused && {backgroundColor: t.tabPill}]}>
             <Icon
               name={focused ? TAB_ICONS[route.name] : `${TAB_ICONS[route.name]}-outline`}
-              size={23}
+              size={21}
               color={focused ? t.primaryText : t.textSub}
             />
           </View>
@@ -83,6 +83,6 @@ export default function AppNavigator() {
 
 const styles = StyleSheet.create({
   tabBar: {paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, elevation: 0},
-  pill: {width: 62, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center'},
-  label: {fontSize: 12, lineHeight: 16, marginTop: 4},
+  pill: {width: 56, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center'},
+  label: {fontSize: 11.5, lineHeight: 15, marginTop: 3},
 });

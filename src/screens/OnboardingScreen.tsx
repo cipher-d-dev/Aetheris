@@ -9,6 +9,7 @@ import {requestRadioPermissions} from '../native/permissions';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import Button from '../ui/Button';
 import Avatar from '../ui/Avatar';
+import Logo from '../ui/Logo';
 import {Icon} from '../ui/Icon';
 
 /**
@@ -51,7 +52,10 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
         style={[styles.container, {paddingTop: insets.top + 40, paddingBottom: 32 + (keyboardVisible ? 0 : insets.bottom), backgroundColor: t.bg}]}
         behavior={keyboardAvoidingBehavior()}>
         <View style={styles.top}>
-          <Text style={[styles.brand, {color: t.primary}]}>Aetheris</Text>
+          <View style={styles.brandRow}>
+            <Logo size={36} />
+            <Text style={[styles.brand, {color: t.text}]}>Aetheris</Text>
+          </View>
           <Text style={[Type.largeTitle, {color: t.text}]}>What should people call you?</Text>
           <Text style={[styles.lead, {color: t.textSub}]}>
             People near you will see this name when they want to message you.
@@ -126,7 +130,8 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
 const styles = StyleSheet.create({
   container: {flex: 1, paddingHorizontal: 24},
   top: {flex: 1},
-  brand: {fontFamily: Font.bold, fontSize: 15, marginBottom: 14, letterSpacing: 0.2},
+  brandRow: {flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 22},
+  brand: {fontFamily: Font.extraBold, fontSize: 18, letterSpacing: -0.2},
   lead: {fontFamily: Font.regular, fontSize: 16, lineHeight: 24, marginTop: 10},
   preview: {alignItems: 'center', marginTop: 36, marginBottom: 24},
   emptyAvatar: {width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center'},
