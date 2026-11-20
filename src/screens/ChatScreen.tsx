@@ -38,6 +38,7 @@ import Avatar, {senderTextColor} from '../ui/Avatar';
 import {Icon} from '../ui/Icon';
 import {deliveryExplanation, statusLabel} from '../ui/a11y';
 import IconButton from '../ui/IconButton';
+import Wallpaper from '../ui/Wallpaper';
 import SwipeToReply from '../ui/SwipeToReply';
 import MessageMenu, {MessageMenuAction} from '../ui/MessageMenu';
 import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
@@ -79,17 +80,17 @@ function waveform(seed: string, bars = 28): number[] {
 
 // ─── Ticks ────────────────────────────────────────────────────────────────────
 
-function Ticks({m, color, onPress}: {m: ChatMessage; color: string; onPress: () => void}) {
+function Ticks({m, color, readColor, danger, onPress}: {m: ChatMessage; color: string; readColor: string; danger: string; onPress: () => void}) {
   const icon =
     m.status === 'pending' ? (
       <Icon name="time-outline" size={14} color={color} />
     ) : m.status === 'failed' ? (
-      <Icon name="alert-circle" size={15} color="#FFD7D9" />
+      <Icon name="alert-circle" size={15} color={danger} />
     ) : (
       <Icon
         name={m.status === 'delivered' ? 'checkmark-done' : 'checkmark'}
         size={16}
-        color={m.status === 'delivered' ? '#FFFFFF' : color}
+        color={m.status === 'delivered' ? readColor : color}
       />
     );
   return (
@@ -145,14 +146,15 @@ function Bubble({
   const meta = out ? t.bubbleOutMeta : t.bubbleInMeta;
   const uri = m.kind === 'image' && m.media ? `data:${m.media.mime};base64,${m.media.data}` : null;
   const aspect = m.media?.width && m.media?.height ? m.media.width / m.media.height : 1;
-  const big = 20;
-  const small = 6;
-
-  const radius = out
-    ? {borderTopLeftRadius: big, borderBottomLeftRadius: big, borderTopRightRadius: first ? big : small, borderBottomRightRadius: last ? small : small}
-    : {borderTopRightRadius: big, borderBottomRightRadius: big, borderTopLeftRadius: first ? big : small, borderBottomLeftRadius: last ? small : small};
-  if (out && first && last) radius.borderBottomRightRadius = small;
-  if (!out && first && last) radius.borderBottomLeftRadius = small;
+  // The first bubble of a run gets a small tail at its top corner.
+  const r = 14;
+  const radius = {
+    borderTopLeftRadius: !out && first ? 0 : r,
+    borderTopRightRadius: out && first ? 0 : r,
+    borderBottomLeftRadius: r,
+    borderBottomRightRadius: r,
+  };
+  const bubbleColor = out ? t.bubbleOut : t.bubbleIn;
 
   const timeAndTicks = (
     <View style={styles.meta}>
@@ -165,7 +167,7 @@ function Bubble({
       ) : (
         <Text style={[styles.metaText, {color: meta}]}>{formatClock(m.createdAt)}</Text>
       )}
-      {out && <Ticks m={m} color={meta} onPress={onStatus} />}
+      {out && <Ticks m={m} color={meta} readColor={t.tickRead} danger={t.danger} onPress={onStatus} />}
     </View>
   );
 
@@ -174,7 +176,8 @@ function Bubble({
       style={[
         styles.row,
         out ? styles.rowOut : styles.rowIn,
-        last && {marginBottom: 6},
+        first && {marginTop: 5},
+        last && {marginBottom: 2},
         highlight && {backgroundColor: t.primarySoft},
       ]}>
       <View style={[styles.stack, out ? styles.stackOut : styles.stackIn]}>
@@ -213,10 +216,21 @@ function Bubble({
         style={[
           styles.bubble,
           radius,
-          {backgroundColor: out ? t.bubbleOut : t.bubbleIn},
+          {backgroundColor: bubbleColor},
           uri && styles.imageBubble,
-          !t.isDark && !out && styles.inShadow,
+          t.bubbleShadow && styles.shadow,
         ]}>
+        {first && (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.tail,
+              out
+                ? {right: -7, borderTopColor: bubbleColor, borderRightWidth: 8, borderRightColor: 'transparent'}
+                : {left: -7, borderTopColor: bubbleColor, borderLeftWidth: 8, borderLeftColor: 'transparent'},
+            ]}
+          />
+        )}
         {showSender && !out && (
           <Text style={[styles.sender, {color: senderTextColor(m.senderId, t.isDark)}]}>
             {displayName(m.senderId, m.senderAlias)}
@@ -230,16 +244,15 @@ function Bubble({
             onPress={() => onQuote(quote.targetId)}
             style={[
               styles.quote,
-              // Darken rather than lighten the coloured bubble, so white text keeps its contrast.
-              {backgroundColor: out ? 'rgba(0,0,0,0.18)' : t.surfaceAlt},
+              {backgroundColor: out ? t.quoteOut : t.quoteIn},
               uri && styles.quoteOnImage,
             ]}>
-            <View style={[styles.quoteStripe, {backgroundColor: out ? 'rgba(255,255,255,0.85)' : t.primary}]} />
+            <View style={[styles.quoteStripe, {backgroundColor: t.quoteBar}]} />
             <View style={styles.quoteBody}>
-              <Text numberOfLines={1} style={[styles.quoteName, {color: out ? t.bubbleOutText : t.primary}]}>
+              <Text numberOfLines={1} style={[styles.quoteName, {color: t.quoteName}]}>
                 {quote.name}
               </Text>
-              <Text numberOfLines={2} style={[styles.quoteText, {color: out ? t.bubbleOutText : t.textSub}]}>
+              <Text numberOfLines={2} style={[styles.quoteText, {color: meta}]}>
                 {quote.snippet}
               </Text>
             </View>
@@ -248,12 +261,12 @@ function Bubble({
         {uri && <Image source={{uri}} style={[styles.image, radius, {aspectRatio: aspect}]} resizeMode="cover" />}
         {m.kind === 'audio' && (
           <View style={styles.audio}>
-            <View style={[styles.playButton, {backgroundColor: out ? 'rgba(255,255,255,0.22)' : t.primary}]}>
-              <Icon name={playing ? 'pause' : 'play'} size={18} color="#FFFFFF" style={!playing && {marginLeft: 2}} />
+            <View style={[styles.playButton, {backgroundColor: t.primary}]}>
+              <Icon name={playing ? 'pause' : 'play'} size={18} color={t.onPrimary} style={!playing && {marginLeft: 2}} />
             </View>
             <View style={styles.wave}>
               {waveform(m.id).map((h, i) => (
-                <View key={i} style={[styles.waveBar, {height: 4 + h * 22, backgroundColor: out ? 'rgba(255,255,255,0.75)' : t.textMuted}]} />
+                <View key={i} style={[styles.waveBar, {height: 4 + h * 22, backgroundColor: meta, opacity: 0.75}]} />
               ))}
             </View>
             <Text style={[styles.audioTime, {color: meta}]}>{duration(m.media?.durationMs ?? 0)}</Text>
@@ -281,7 +294,7 @@ function Bubble({
               onPress={() => onReact(g.mine ? '' : g.emoji)}
               style={[
                 styles.chip,
-                {backgroundColor: g.mine ? t.primarySoft : t.surface, borderColor: g.mine ? t.primary : t.border},
+                {backgroundColor: g.mine ? t.primarySoft : t.chatHeader, borderColor: g.mine ? t.primary : t.border},
               ]}>
               <Text style={[styles.chipText, {color: t.text}]}>{g.count > 1 ? `${g.emoji} ${g.count}` : g.emoji}</Text>
             </Pressable>
@@ -774,8 +787,8 @@ export default function ChatScreen() {
   return (
     <KeyboardAvoidingView style={{flex: 1, backgroundColor: t.chatBg}} behavior={keyboardAvoidingBehavior()}>
       {/* Header */}
-      <View style={[styles.header, {paddingTop: insets.top + 40, backgroundColor: t.bg, borderBottomColor: t.separator}]}>
-        <IconButton accessibilityLabel="Back" name="chevron-back" size={26} onPress={() => navigation.goBack()} />
+      <View style={[styles.header, {paddingTop: insets.top + 8, backgroundColor: t.chatHeader, borderBottomColor: t.separator}]}>
+        <IconButton accessibilityLabel="Back" name="arrow-back" size={24} onPress={() => navigation.goBack()} />
         <Pressable
           style={styles.headerWho}
           onPress={() => navigation.navigate('ContactInfo', {conversationId})}>
@@ -789,9 +802,17 @@ export default function ChatScreen() {
             </Text>
           </View>
         </Pressable>
+        <IconButton
+          accessibilityLabel={isGroup ? 'Group info' : 'Contact info'}
+          name="ellipsis-vertical"
+          size={20}
+          color={t.textSub}
+          onPress={() => navigation.navigate('ContactInfo', {conversationId})}
+        />
       </View>
 
       <View style={styles.listWrap}>
+      <Wallpaper />
       <FlatList
         ref={listRef}
         data={items}
@@ -803,8 +824,8 @@ export default function ChatScreen() {
         onScrollBeginDrag={() => (pendingAnchorScroll.current = false)}
         scrollEventThrottle={16}
         ListHeaderComponent={
-          <View style={[styles.notice, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
-            <Icon name="lock-closed" size={13} color={t.textMuted} />
+          <View style={[styles.notice, {backgroundColor: t.chatHeader}, t.bubbleShadow && styles.shadow]}>
+            <Icon name="lock-closed" size={13} color={t.primaryText} />
             <Text style={[styles.noticeText, {color: t.textSub}]}>
               Messages are end-to-end encrypted. They may hop through other Aetheris phones on the
               way, and those phones can't read them. No internet involved.
@@ -814,13 +835,13 @@ export default function ChatScreen() {
         renderItem={({item}) =>
           item.type === 'unread' ? (
             <View style={styles.dayWrap}>
-              <Text style={[styles.day, {color: t.textSub, backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
+              <Text style={[styles.day, {color: t.primaryText, backgroundColor: t.chatHeader}]}>
                 {unreadAnchor?.count === 1 ? '1 unread message' : `${unreadAnchor?.count} unread messages`}
               </Text>
             </View>
           ) : item.type === 'day' ? (
             <View style={styles.dayWrap}>
-              <Text style={[styles.day, {color: t.textSub, backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
+              <Text style={[styles.day, {color: t.textSub, backgroundColor: t.chatHeader}]}>
                 {dayLabel(item.ts)}
               </Text>
             </View>
@@ -851,8 +872,8 @@ export default function ChatScreen() {
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel={aboveId ? 'New message above, jump to it' : 'Scroll to new messages'}
-          style={[styles.newPill, {backgroundColor: t.surface}]}>
-          <Icon name={aboveId ? 'arrow-up' : 'arrow-down'} size={14} color={t.primary} />
+          style={[styles.newPill, {backgroundColor: t.chatHeader}]}>
+          <Icon name={aboveId ? 'arrow-up' : 'arrow-down'} size={14} color={t.primaryText} />
           <Text style={[styles.newPillText, {color: t.text}]}>
             {aboveId ? 'New message above' : 'New messages'}
           </Text>
@@ -861,7 +882,7 @@ export default function ChatScreen() {
       </View>
 
       {!isGroup && !nearby && messages.some(m => m.isOutbound && m.status !== 'delivered' && m.status !== 'failed') && (
-        <View style={[styles.away, {backgroundColor: t.isDark ? t.surface : '#FFFFFF'}]}>
+        <View style={[styles.away, {backgroundColor: t.chatHeader}]}>
           <Icon name="time-outline" size={15} color={t.textSub} />
           <Text style={[styles.awayText, {color: t.textSub}]}>
             {title} isn't nearby. Your messages will be delivered when they are.
@@ -884,10 +905,10 @@ export default function ChatScreen() {
 
       {/* Composer */}
       {replyingTo && !recording && (
-        <View style={[styles.replyBar, {backgroundColor: t.surface}]}>
-          <View style={[styles.quoteStripe, {backgroundColor: t.primary}]} />
+        <View style={[styles.replyBar, {backgroundColor: t.chatHeader}]}>
+          <View style={[styles.quoteStripe, {backgroundColor: t.quoteBar}]} />
           <View style={styles.quoteBody}>
-            <Text numberOfLines={1} style={[styles.quoteName, {color: t.primary}]}>
+            <Text numberOfLines={1} style={[styles.quoteName, {color: t.quoteName}]}>
               {replyingTo.isOutbound ? 'You' : displayName(replyingTo.senderId, replyingTo.senderAlias)}
             </Text>
             <Text numberOfLines={1} style={[styles.quoteText, {color: t.textSub}]}>
@@ -898,11 +919,11 @@ export default function ChatScreen() {
         </View>
       )}
 
-      <View style={[styles.composer, {backgroundColor: t.bg, paddingBottom: 10 + (keyboardVisible ? 0 : insets.bottom)}]}>
+      <View style={[styles.composer, {backgroundColor: t.chatBg, paddingBottom: 10 + (keyboardVisible ? 0 : insets.bottom)}]}>
         {recording ? (
           <>
             <IconButton accessibilityLabel="Discard recording" name="trash-outline" color={t.danger} onPress={cancelRecording} />
-            <View style={[styles.recording, {backgroundColor: t.surface}]}>
+            <View style={[styles.recording, {backgroundColor: t.chatHeader}]}>
               <View style={[styles.recDot, {backgroundColor: t.danger}]} />
               <Text style={[styles.recText, {color: t.text}]}>{duration(elapsed)}</Text>
               <Text style={[styles.recHint, {color: t.textMuted}]}>Recording…</Text>
@@ -911,7 +932,7 @@ export default function ChatScreen() {
           </>
         ) : (
           <>
-            <View style={[styles.inputWrap, {backgroundColor: t.surface}]}>
+            <View style={[styles.inputWrap, {backgroundColor: t.isDark ? t.surface : t.chatHeader}, t.bubbleShadow && styles.shadow]}>
               <TextInput
                 ref={inputRef}
                 style={[styles.input, {color: t.text}]}
@@ -965,21 +986,21 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: {flexDirection: 'row', alignItems: 'center', paddingBottom: 8, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth},
+  header: {flexDirection: 'row', alignItems: 'center', paddingBottom: 8, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, zIndex: 2},
   headerWho: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 11},
-  headerName: {fontFamily: Font.semiBold, fontSize: 16.5},
+  headerName: {fontFamily: Font.bold, fontSize: 16.5},
   headerSub: {fontFamily: Font.medium, fontSize: 12.5, marginTop: 1},
   listWrap: {flex: 1},
   newPill: {position: 'absolute', bottom: 12, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18, shadowColor: '#0F1419', shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: {width: 0, height: 2}, elevation: 4},
   newPillText: {fontFamily: Font.semiBold, fontSize: 13},
-  list: {paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12, flexGrow: 1},
+  list: {paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12, flexGrow: 1},
   notice: {flexDirection: 'row', gap: 8, alignSelf: 'center', maxWidth: 320, padding: 10, paddingHorizontal: 12, borderRadius: 12, marginBottom: 12, alignItems: 'flex-start'},
   noticeText: {flex: 1, fontFamily: Font.regular, fontSize: 12, lineHeight: 17, textAlign: 'center'},
   dayWrap: {alignItems: 'center', marginVertical: 10},
-  day: {fontFamily: Font.semiBold, fontSize: 12, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 10, overflow: 'hidden'},
+  day: {fontFamily: Font.semiBold, fontSize: 12, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 9, overflow: 'hidden'},
   row: {flexDirection: 'row', marginVertical: 1.5},
-  rowOut: {justifyContent: 'flex-end', paddingLeft: 56},
-  rowIn: {justifyContent: 'flex-start', paddingRight: 56},
+  rowOut: {justifyContent: 'flex-end', paddingLeft: 56, paddingRight: 6},
+  rowIn: {justifyContent: 'flex-start', paddingRight: 56, paddingLeft: 6},
   stack: {maxWidth: '100%'},
   stackOut: {alignItems: 'flex-end'},
   stackIn: {alignItems: 'flex-start'},
@@ -992,7 +1013,8 @@ const styles = StyleSheet.create({
   reactionBtn: {width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center'},
   reactionEmoji: {fontSize: 26},
   bubble: {paddingHorizontal: 12, paddingTop: 8, paddingBottom: 7, maxWidth: '100%'},
-  inShadow: {shadowColor: '#0F1419', shadowOpacity: 0.06, shadowRadius: 2, shadowOffset: {width: 0, height: 1}, elevation: 1},
+  shadow: {shadowColor: '#0B141A', shadowOpacity: 0.08, shadowRadius: 1.5, shadowOffset: {width: 0, height: 1}, elevation: 1},
+  tail: {position: 'absolute', top: 0, width: 0, height: 0, borderTopWidth: 12},
   imageBubble: {padding: 3, width: 260},
   sender: {fontFamily: Font.semiBold, fontSize: 13, marginBottom: 2},
   image: {width: '100%'},
@@ -1016,17 +1038,17 @@ const styles = StyleSheet.create({
   quoteBody: {flex: 1, paddingHorizontal: 8, paddingVertical: 4},
   quoteName: {fontFamily: Font.semiBold, fontSize: 12.5},
   quoteText: {fontFamily: Font.regular, fontSize: 13, lineHeight: 17},
-  replyBar: {flexDirection: 'row', alignItems: 'center', marginHorizontal: 10, marginTop: 6, borderRadius: 12, overflow: 'hidden', paddingRight: 4},
+  replyBar: {flexDirection: 'row', alignItems: 'center', marginHorizontal: 10, marginTop: 6, borderRadius: 14, overflow: 'hidden', paddingRight: 4},
   away: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, borderRadius: 12},
   awayText: {flex: 1, fontFamily: Font.regular, fontSize: 12.5, lineHeight: 17},
   error: {flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, borderRadius: 12},
   errorText: {flex: 1, fontFamily: Font.medium, fontSize: 13},
   composer: {flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingTop: 8},
-  inputWrap: {flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 22, minHeight: 44},
-  input: {flex: 1, maxHeight: 130, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11, fontFamily: Font.regular, fontSize: 15.5},
-  inlineIcon: {width: 40, height: 44},
-  sendButton: {width: 44, height: 44, borderRadius: 22},
-  recording: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: 44, borderRadius: 22, paddingHorizontal: 16},
+  inputWrap: {flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 24, minHeight: 48},
+  input: {flex: 1, maxHeight: 130, paddingHorizontal: 18, paddingTop: 13, paddingBottom: 13, fontFamily: Font.regular, fontSize: 16},
+  inlineIcon: {width: 44, height: 48},
+  sendButton: {width: 48, height: 48, borderRadius: 24},
+  recording: {flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: 48, borderRadius: 24, paddingHorizontal: 18},
   recDot: {width: 10, height: 10, borderRadius: 5},
   recText: {fontFamily: Font.semiBold, fontSize: 15},
   recHint: {fontFamily: Font.regular, fontSize: 14},
