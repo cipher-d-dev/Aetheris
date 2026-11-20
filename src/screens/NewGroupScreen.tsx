@@ -28,8 +28,8 @@ export default function NewGroupScreen() {
 
   return (
     <View style={[styles.container, {backgroundColor: t.bg}]}>
-      <View style={[styles.header, {paddingTop: insets.top + 44}]}>
-        <IconButton accessibilityLabel="Back" name="chevron-back" onPress={() => navigation.goBack()} />
+      <View style={[styles.header, {paddingTop: insets.top + 8}]}>
+        <IconButton accessibilityLabel="Back" name="arrow-back" size={24} onPress={() => navigation.goBack()} />
         <Text style={[Type.title, {color: t.text, flex: 1}]}>New group</Text>
       </View>
 

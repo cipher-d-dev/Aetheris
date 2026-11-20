@@ -12,8 +12,10 @@ import {
   dbGetPeer,
   dbGroupDeliveryCounts,
   dbListConversations,
+  dbReactionsFor,
   dbMarkConversationRead,
   MessageRow,
+  ReactionRow,
 } from '../db/database';
 import {formatShortId} from '../crypto/encoding';
 
@@ -75,12 +77,15 @@ function previewText(kind: string, text: string): string {
 interface MessagesState {
   conversations: Conversation[];
   messages: Record<string, ChatMessage[]>;
+  /** Reactions per conversation, then per message refId */
+  reactions: Record<string, Record<string, ReactionRow[]>>;
   /** Conversation currently on screen (no notifications / unread for it) */
   activeConversation: string | null;
   /** First unread message at the moment the chat was opened; kept until it is left. */
   unreadAnchor: {conversationId: string; id: string; count: number} | null;
   loadConversations: () => void;
   loadMessages: (conversationId: string) => void;
+  loadReactions: (conversationId: string) => void;
   setActiveConversation: (id: string | null) => void;
   /** Re-read a conversation (and the list) from the DB after a change. */
   refresh: (conversationId?: string) => void;
@@ -91,6 +96,7 @@ interface MessagesState {
 export const useMessagesStore = create<MessagesState>((set, get) => ({
   conversations: [],
   messages: {},
+  reactions: {},
   activeConversation: null,
   unreadAnchor: null,
 
@@ -120,8 +126,18 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
         return {...m, deliveredCount: c.delivered, recipientCount: c.total};
       });
       set(state => ({messages: {...state.messages, [conversationId]: list}}));
+      get().loadReactions(conversationId);
     } catch (e) {
       console.warn('[messagesStore] loadMessages failed', e);
+    }
+  },
+
+  loadReactions: (conversationId: string) => {
+    try {
+      const list = dbReactionsFor(conversationId);
+      set(state => ({reactions: {...state.reactions, [conversationId]: list}}));
+    } catch (e) {
+      console.warn('[messagesStore] loadReactions failed', e);
     }
   },
 
@@ -154,8 +170,11 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
     set(state => {
       const messages = {...state.messages};
       delete messages[conversationId];
+      const reactions = {...state.reactions};
+      delete reactions[conversationId];
       return {
         messages,
+        reactions,
         conversations: state.conversations.filter(c => c.id !== conversationId),
       };
     });

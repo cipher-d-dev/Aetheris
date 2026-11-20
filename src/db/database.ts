@@ -4,7 +4,7 @@
  */
 import {open, QuickSQLiteConnection} from 'react-native-quick-sqlite';
 import {CREATE_TABLES_SQL} from './schema';
-import {GroupInfo, MediaAttachment, MessageStatus, ContentKind} from '../types/message';
+import {GroupInfo, MediaAttachment, MessageStatus, ContentKind, ReplyRef} from '../types/message';
 import {MESSAGE_TTL_MS} from '../crypto/messageBuilder';
 import type {CarryRecord, MeshStore} from '../mesh/meshNode';
 
@@ -45,10 +45,29 @@ export async function initDatabase(): Promise<void> {
   ensureColumn('peers', 'nickname', 'TEXT');
   ensureColumn('group_deliveries', 'expired', 'INTEGER DEFAULT 0');
   ensureColumn('messages', 'received_at', 'INTEGER');
+  ensureColumn('messages', 'ref_id', 'TEXT');
+  ensureColumn('messages', 'reply_to', 'TEXT');
+  run('CREATE INDEX IF NOT EXISTS idx_messages_ref ON messages(conversation_id, ref_id)');
+  // Rows from before ref_id existed take their own id. Old inbound group rows are
+  // stored under a per-member id and the shared id was never saved, so they can't be recovered.
+  run('UPDATE messages SET ref_id = id WHERE ref_id IS NULL');
 
   run('DELETE FROM seen_message_ids WHERE seen_at < ?', [Date.now() - SEEN_RETENTION_MS]);
   run('DELETE FROM carried_messages WHERE expires_at < ?', [Date.now()]);
   dbExpireOverdueOutbound(Date.now());
+  dbPruneOrphanReactions(Date.now());
+}
+
+/**
+ * Startup sweep. Reactions may arrive before their message, but not forever: drop
+ * old ones (removal tombstones included) whose message never showed up in that conversation.
+ */
+export function dbPruneOrphanReactions(now: number): void {
+  run(
+    `DELETE FROM reactions WHERE created_at < ? AND NOT EXISTS (
+       SELECT 1 FROM messages m WHERE m.conversation_id = reactions.conversation_id AND m.ref_id = reactions.message_ref)`,
+    [now - MESSAGE_TTL_MS],
+  );
 }
 
 function ensureColumn(table: string, column: string, definition: string): void {
@@ -81,6 +100,11 @@ export function dbDeleteSetting(key: string): void {
 
 export interface MessageRow {
   id: string;
+  /**
+   * Id every phone in the conversation agrees on, for replies and reactions.
+   * 1:1: the mesh message id. Groups: the groupMessageId shared by all copies.
+   */
+  refId: string;
   conversationId: string;
   senderId: string;
   recipientId: string;
@@ -88,6 +112,7 @@ export interface MessageRow {
   kind: ContentKind;
   text: string;
   media?: MediaAttachment;
+  replyTo?: ReplyRef;
   status: MessageStatus;
   isOutbound: boolean;
   route?: string[];
@@ -97,14 +122,15 @@ export interface MessageRow {
   expiresAt?: number;
 }
 
-export function dbInsertMessage(m: MessageRow & {read?: boolean}): void {
+export function dbInsertMessage(m: Omit<MessageRow, 'refId'> & {refId?: string; read?: boolean}): void {
   run(
     `INSERT OR IGNORE INTO messages
-       (id, conversation_id, sender_id, recipient_id, sender_alias, kind, text, media,
-        status, is_outbound, route, created_at, received_at, expires_at, read)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, ref_id, conversation_id, sender_id, recipient_id, sender_alias, kind, text, media,
+        status, is_outbound, route, created_at, received_at, expires_at, read, reply_to)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       m.id,
+      m.refId ?? m.id,
       m.conversationId,
       m.senderId,
       m.recipientId,
@@ -119,6 +145,7 @@ export function dbInsertMessage(m: MessageRow & {read?: boolean}): void {
       m.receivedAt ?? null,
       m.expiresAt ?? null,
       m.read === false ? 0 : 1,
+      m.replyTo ? JSON.stringify(m.replyTo) : null,
     ],
   );
 }
@@ -189,6 +216,26 @@ export function dbListConversations(): ConversationRow[] {
   }));
 }
 
+export function dbFindByRef(conversationId: string, refId: string): MessageRow | null {
+  // Earliest-inserted row wins, so a later message can't take over a ref.
+  const r = rows(
+    'SELECT * FROM messages WHERE conversation_id = ? AND ref_id = ? ORDER BY rowid ASC LIMIT 1',
+    [conversationId, refId],
+  )[0];
+  return r ? rowToMessage(r) : null;
+}
+
+/** True if a message from someone other than senderId already uses this ref in the conversation. */
+export function dbRefUsedByOther(conversationId: string, refId: string, senderId: string): boolean {
+  return (
+    rows('SELECT 1 AS x FROM messages WHERE conversation_id = ? AND ref_id = ? AND sender_id != ? LIMIT 1', [
+      conversationId,
+      refId,
+      senderId,
+    ]).length > 0
+  );
+}
+
 export function dbGetMessage(id: string): MessageRow | null {
   const r = rows('SELECT * FROM messages WHERE id = ?', [id])[0];
   return r ? rowToMessage(r) : null;
@@ -198,7 +245,11 @@ export function dbGetMessage(id: string): MessageRow | null {
 export function dbDeleteMessage(id: string): string[] {
   const subs = rows('SELECT sub_id FROM group_deliveries WHERE message_id = ?', [id]).map(r => r.sub_id);
   run('DELETE FROM group_deliveries WHERE message_id = ?', [id]);
+  const row = rows('SELECT conversation_id, ref_id FROM messages WHERE id = ?', [id])[0];
   run('DELETE FROM messages WHERE id = ?', [id]);
+  if (row?.ref_id) {
+    run('DELETE FROM reactions WHERE conversation_id = ? AND message_ref = ?', [row.conversation_id, row.ref_id]);
+  }
   return subs;
 }
 
@@ -218,7 +269,47 @@ export function dbDeleteConversation(conversationId: string): string[] {
     [conversationId],
   );
   run('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
+  run('DELETE FROM reactions WHERE conversation_id = ?', [conversationId]);
   return [...ids, ...subs];
+}
+
+export interface ReactionRow {
+  emoji: string;
+  reactorId: string;
+}
+
+/**
+ * Set (or, with emoji '', remove) one person's reaction to a message. Mesh messages
+ * can arrive out of order, so an older reaction never replaces a newer one. A removal
+ * is kept as an empty-emoji row so a stale reaction arriving later can't bring it back.
+ */
+export function dbSetReaction(
+  conversationId: string,
+  messageRef: string,
+  reactorId: string,
+  emoji: string,
+  createdAt: number,
+): void {
+  run(
+    `INSERT INTO reactions (message_ref, conversation_id, reactor_id, emoji, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(conversation_id, message_ref, reactor_id) DO UPDATE SET
+       emoji = excluded.emoji, created_at = excluded.created_at
+     WHERE excluded.created_at >= reactions.created_at`,
+    [messageRef, conversationId, reactorId, emoji, createdAt],
+  );
+}
+
+export function dbReactionsFor(conversationId: string): Record<string, ReactionRow[]> {
+  const out: Record<string, ReactionRow[]> = {};
+  for (const r of rows(
+    `SELECT message_ref, reactor_id, emoji FROM reactions
+      WHERE conversation_id = ? AND emoji != '' ORDER BY created_at`,
+    [conversationId],
+  )) {
+    (out[r.message_ref] ??= []).push({emoji: r.emoji, reactorId: r.reactor_id});
+  }
+  return out;
 }
 
 /** Our own messages that are still waiting for an ACK (for UI only). */
@@ -231,6 +322,7 @@ export function dbPendingOutboundIds(): string[] {
 function rowToMessage(r: any): MessageRow {
   return {
     id: r.id,
+    refId: r.ref_id ?? r.id,
     conversationId: r.conversation_id,
     senderId: r.sender_id,
     recipientId: r.recipient_id,
@@ -238,6 +330,7 @@ function rowToMessage(r: any): MessageRow {
     kind: (r.kind ?? 'text') as ContentKind,
     text: r.text ?? '',
     media: r.media ? safeJson(r.media) : undefined,
+    replyTo: r.reply_to ? safeJson(r.reply_to) : undefined,
     status: r.status as MessageStatus,
     isOutbound: r.is_outbound === 1,
     route: r.route ? safeJson(r.route) : undefined,

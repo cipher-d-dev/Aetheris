@@ -1,5 +1,5 @@
 import React from 'react';
-import {StyleSheet, Text} from 'react-native';
+import {StyleSheet, Text, View} from 'react-native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -36,12 +36,21 @@ function Tabs() {
           styles.tabBar,
           {height: 70 + insets.bottom, paddingBottom: 10 + insets.bottom, backgroundColor: t.bg, borderTopColor: t.separator},
         ],
-        tabBarActiveTintColor: t.primary,
-        tabBarInactiveTintColor: t.textMuted,
+        tabBarActiveTintColor: t.text,
+        tabBarInactiveTintColor: t.textSub,
         tabBarLabelPosition: 'below-icon',
-        tabBarLabel: ({color}) => <Text style={[styles.label, {color}]}>{route.name}</Text>,
-        tabBarIcon: ({color, focused}) => (
-          <Icon name={focused ? TAB_ICONS[route.name] : `${TAB_ICONS[route.name]}-outline`} size={25} color={color} />
+        tabBarLabel: ({color, focused}) => (
+          <Text style={[styles.label, {color, fontFamily: focused ? Font.bold : Font.medium}]}>{route.name}</Text>
+        ),
+        // Active tab: a soft pill behind a filled icon.
+        tabBarIcon: ({focused}) => (
+          <View style={[styles.pill, focused && {backgroundColor: t.tabPill}]}>
+            <Icon
+              name={focused ? TAB_ICONS[route.name] : `${TAB_ICONS[route.name]}-outline`}
+              size={23}
+              color={focused ? t.primaryText : t.textSub}
+            />
+          </View>
         ),
       })}>
       <Tab.Screen
@@ -49,7 +58,7 @@ function Tabs() {
         component={ChatsScreen}
         options={{
           tabBarBadge: unread > 0 ? (unread > 99 ? '99+' : unread) : undefined,
-          tabBarBadgeStyle: {backgroundColor: t.primary, fontFamily: Font.bold, fontSize: 10},
+          tabBarBadgeStyle: {backgroundColor: t.primary, color: t.onPrimary, fontFamily: Font.bold, fontSize: 10, top: 2},
         }}
       />
       <Tab.Screen name="People" component={PeopleScreen} />
@@ -74,5 +83,6 @@ export default function AppNavigator() {
 
 const styles = StyleSheet.create({
   tabBar: {paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, elevation: 0},
-  label: {fontFamily: Font.semiBold, fontSize: 11.5, lineHeight: 16, marginTop: 2},
+  pill: {width: 62, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center'},
+  label: {fontSize: 12, lineHeight: 16, marginTop: 4},
 });

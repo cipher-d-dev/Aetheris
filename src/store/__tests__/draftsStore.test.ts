@@ -35,6 +35,18 @@ describe('draftsStore', () => {
     jest.useRealTimers();
   });
 
+  it('keeps a pending reply per chat and restores it on load', () => {
+    useDraftsStore.getState().setReply('a', 'msg-1');
+    expect(useDraftsStore.getState().replies.a).toBe('msg-1');
+    expect(dbGetSetting('reply:a')).toBe('msg-1');
+    useDraftsStore.setState({replies: {}});
+    useDraftsStore.getState().loadDrafts();
+    expect(useDraftsStore.getState().replies.a).toBe('msg-1');
+    useDraftsStore.getState().setReply('a', null);
+    expect(useDraftsStore.getState().replies.a).toBeUndefined();
+    expect(dbGetSetting('reply:a')).toBeNull();
+  });
+
   it('updates memory at once and persists after 500 ms', () => {
     useDraftsStore.getState().setDraft('a', 'hello');
     expect(useDraftsStore.getState().drafts.a).toBe('hello');

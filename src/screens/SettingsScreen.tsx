@@ -58,7 +58,7 @@ export default function SettingsScreen() {
   return (
     <View style={{flex: 1, backgroundColor: t.bg}}>
       <ScrollView contentContainerStyle={{paddingBottom: 40 + insets.bottom}}>
-        <Text style={[Type.largeTitle, styles.title, {paddingTop: insets.top + 56, color: t.text}]}>Settings</Text>
+        <Text accessibilityRole="header" style={[styles.title, {paddingTop: insets.top + 14, color: t.text}]}>Settings</Text>
 
         <Pressable
           onPress={() => {
@@ -117,14 +117,14 @@ export default function SettingsScreen() {
           </View>
         </Section>
 
-        <Section title="Mesh">
+        <Section title="Helping others">
           <ListRow
             icon="git-network-outline"
             iconColor="#7C3AED"
             title={
               mesh.carryingForOthers === 0
-                ? 'Not carrying anything for others right now'
-                : `Carrying ${mesh.carryingForOthers} ${mesh.carryingForOthers === 1 ? 'message' : 'messages'} for others`
+                ? 'Not passing on any messages right now'
+                : `Passing on ${mesh.carryingForOthers} ${mesh.carryingForOthers === 1 ? 'message' : 'messages'} for others`
             }
             subtitle="Your phone passes these on when it meets someone who can deliver them. They're encrypted, so you can't read them. Uses a little battery."
           />
@@ -169,7 +169,7 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: {paddingHorizontal: 20, paddingBottom: 12},
+  title: {fontFamily: Font.extraBold, fontSize: 27, letterSpacing: -0.6, paddingHorizontal: 20, paddingBottom: 12},
   profile: {flexDirection: 'row', alignItems: 'center', gap: 14, marginHorizontal: 16, padding: 16, borderRadius: 20},
   profileName: {fontFamily: Font.bold, fontSize: 19},
   profileSub: {fontFamily: Font.regular, fontSize: 13, marginTop: 3},
