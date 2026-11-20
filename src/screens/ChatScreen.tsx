@@ -15,6 +15,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  AccessibilityInfo,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -180,14 +181,32 @@ function Bubble({
       <Pressable
         {...(m.kind === 'audio' && {
           accessibilityRole: 'button' as const,
-          accessibilityLabel: playing ? 'Pause voice message' : 'Play voice message',
+          // The label replaces the children, so it has to say everything they show.
+          accessibilityLabel: [
+            `${playing ? 'Pause' : 'Play'} voice message, ${duration(m.media?.durationMs ?? 0)}`,
+            showSender && !out ? `from ${displayName(m.senderId, m.senderAlias)}` : '',
+            quote ? `reply to ${quote.name}` : '',
+            isLate(m) ? lateAccessibilityLabel(m) : formatClock(m.createdAt),
+            out ? statusLabel(m.status) : '',
+          ]
+            .filter(Boolean)
+            .join(', '),
         })}
-        {...(onReply && {
-          accessibilityActions: [{name: 'reply', label: 'Reply'}],
-          onAccessibilityAction: (e: {nativeEvent: {actionName: string}}) => {
-            if (e.nativeEvent.actionName === 'reply') onReply();
-          },
-        })}
+        // TalkBack focuses the bubble as one item, so the quote, the status tick
+        // and the long-press menu are offered as actions too.
+        accessibilityActions={[
+          ...(onReply ? [{name: 'reply', label: 'Reply'}] : []),
+          ...(quote?.targetId ? [{name: 'quote', label: 'Jump to original message'}] : []),
+          ...(out ? [{name: 'status', label: 'Delivery details'}] : []),
+          {name: 'menu', label: 'More options'},
+        ]}
+        onAccessibilityAction={e => {
+          const a = e.nativeEvent.actionName;
+          if (a === 'reply') onReply?.();
+          else if (a === 'quote' && quote) onQuote(quote.targetId);
+          else if (a === 'status') onStatus();
+          else if (a === 'menu') onLongPress();
+        }}
         onLongPress={onLongPress}
         delayLongPress={300}
         onPress={() => (uri ? onImage(uri) : m.kind === 'audio' ? onPlay() : undefined)}
@@ -206,11 +225,13 @@ function Bubble({
         {quote && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Reply to ${quote.name}: ${quote.snippet}.${quote.unverified ? ' Original message is not on this phone, so this is unverified.' : ''} Double tap to view.`}
+            accessibilityLabel={`Reply to ${quote.name}: ${quote.snippet}.${quote.unverified ? ' Original message is not on this phone, so this is unverified.' : ''}`}
+            accessibilityHint={quote.targetId ? 'Jumps to the original message' : undefined}
             onPress={() => onQuote(quote.targetId)}
             style={[
               styles.quote,
-              {backgroundColor: out ? 'rgba(255,255,255,0.16)' : t.surfaceAlt},
+              // Darken rather than lighten the coloured bubble, so white text keeps its contrast.
+              {backgroundColor: out ? 'rgba(0,0,0,0.18)' : t.surfaceAlt},
               uri && styles.quoteOnImage,
             ]}>
             <View style={[styles.quoteStripe, {backgroundColor: out ? 'rgba(255,255,255,0.85)' : t.primary}]} />
@@ -253,18 +274,16 @@ function Bubble({
             <Pressable
               key={g.emoji}
               accessibilityRole="button"
-              accessibilityLabel={
-                g.mine
-                  ? `${g.emoji} ${g.count}, including you. Tap to remove`
-                  : `${g.emoji} ${g.count}. Tap to react with ${REACTION_NAMES[g.emoji]}`
-              }
+              accessibilityLabel={`${g.count} ${REACTION_NAMES[g.emoji] ?? g.emoji} ${g.count === 1 ? 'reaction' : 'reactions'}${
+                g.mine ? ', including yours. Tap to remove yours' : `. Tap to react with ${REACTION_NAMES[g.emoji] ?? g.emoji}`
+              }`}
               hitSlop={8}
               onPress={() => onReact(g.mine ? '' : g.emoji)}
               style={[
                 styles.chip,
                 {backgroundColor: g.mine ? t.primarySoft : t.surface, borderColor: g.mine ? t.primary : t.border},
               ]}>
-              <Text style={styles.chipText}>{g.count > 1 ? `${g.emoji} ${g.count}` : g.emoji}</Text>
+              <Text style={[styles.chipText, {color: t.text}]}>{g.count > 1 ? `${g.emoji} ${g.count}` : g.emoji}</Text>
             </Pressable>
           ))}
         </View>
@@ -528,6 +547,7 @@ export default function ChatScreen() {
   const startReply = (m: ChatMessage) => {
     setReplyingTo(m);
     inputRef.current?.focus();
+    AccessibilityInfo.announceForAccessibility(`Replying to ${m.isOutbound ? 'yourself' : displayName(m.senderId, m.senderAlias)}`);
   };
 
   const replyContent = (m: ChatMessage | null) =>
@@ -661,6 +681,7 @@ export default function ChatScreen() {
         // Android 13+ shows its own clipboard confirmation.
         if (Number(Platform.Version) >= 33) return;
         setNotice('Copied');
+        AccessibilityInfo.announceForAccessibility('Copied');
       },
       () => setError("Couldn't copy"),
     );
@@ -812,6 +833,7 @@ export default function ChatScreen() {
       {(aboveId || showNew) && (
         <Pressable
           onPress={aboveId ? jumpToAbove : jumpToNew}
+          hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel={aboveId ? 'New message above, jump to it' : 'Scroll to new messages'}
           style={[styles.newPill, {backgroundColor: t.surface}]}>
@@ -840,7 +862,7 @@ export default function ChatScreen() {
       )}
 
       {notice !== '' && (
-        <View style={[styles.error, {backgroundColor: t.surfaceAlt}]}>
+        <View accessibilityLiveRegion="polite" style={[styles.error, {backgroundColor: t.surfaceAlt}]}>
           <Text style={[styles.errorText, {color: t.textSub}]}>{notice}</Text>
         </View>
       )}
@@ -935,10 +957,10 @@ const styles = StyleSheet.create({
   stack: {maxWidth: '100%'},
   stackOut: {alignItems: 'flex-end'},
   stackIn: {alignItems: 'flex-start'},
-  chips: {flexDirection: 'row', gap: 4, marginTop: -6, paddingHorizontal: 8},
+  chips: {flexDirection: 'row', gap: 6, marginTop: 2, paddingHorizontal: 8},
   chipsOut: {justifyContent: 'flex-end'},
   chipsIn: {justifyContent: 'flex-start'},
-  chip: {minHeight: 24, paddingHorizontal: 7, borderRadius: 12, borderWidth: 1, justifyContent: 'center'},
+  chip: {minHeight: 32, minWidth: 40, paddingHorizontal: 8, borderRadius: 16, borderWidth: 1, alignItems: 'center', justifyContent: 'center'},
   chipText: {fontSize: 13},
   reactionRow: {flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 12, paddingVertical: 6},
   reactionBtn: {width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center'},

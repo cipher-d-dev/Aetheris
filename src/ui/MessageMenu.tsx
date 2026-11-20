@@ -1,5 +1,5 @@
 import React, {ReactNode} from 'react';
-import {Modal, Pressable, StyleSheet, Text, View} from 'react-native';
+import {Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, useThemeStore} from '../theme';
 import {Icon} from './Icon';
@@ -41,14 +41,17 @@ export default function MessageMenu({
         />
         <View
           accessibilityViewIsModal
+          accessibilityLabel="Message options"
           style={[styles.sheet, {backgroundColor: t.bg, paddingBottom: insets.bottom + 8}]}>
-          {preview ? (
-            <Text numberOfLines={1} style={[styles.preview, {color: t.textMuted}]}>
-              {preview}
-            </Text>
-          ) : null}
-          {header}
-          {actions.map(a => (
+          {/* Scrolls at large font sizes or in landscape instead of running off screen. */}
+          <ScrollView bounces={false}>
+            {preview ? (
+              <Text numberOfLines={1} style={[styles.preview, {color: t.textSub}]}>
+                {preview}
+              </Text>
+            ) : null}
+            {header}
+            {actions.map(a => (
             <Pressable
               key={a.key}
               accessibilityRole="button"
@@ -63,7 +66,8 @@ export default function MessageMenu({
               ) : null}
               <Text style={[styles.label, {color: a.destructive ? t.danger : t.text}]}>{a.label}</Text>
             </Pressable>
-          ))}
+            ))}
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -73,7 +77,7 @@ export default function MessageMenu({
 const styles = StyleSheet.create({
   root: {flex: 1, justifyContent: 'flex-end'},
   backdrop: {backgroundColor: 'rgba(0,0,0,0.45)'},
-  sheet: {borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 8, overflow: 'hidden'},
+  sheet: {maxHeight: '85%', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 8, overflow: 'hidden'},
   preview: {fontFamily: Font.regular, fontSize: 13, paddingHorizontal: 20, paddingVertical: 10},
   row: {minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 16, paddingHorizontal: 20},
   label: {fontFamily: Font.medium, fontSize: 16},
