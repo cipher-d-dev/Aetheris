@@ -428,6 +428,37 @@ describe('meshService with a peer phone', () => {
     expect(dbGetConversation(`group:${gid}`).at(-1)!.text).toBe('new group!');
   });
 
+  it("doesn't let a message rename a known group or change its members", async () => {
+    const carol = await keypair();
+    const conversationId = useMeshService.getState().createGroup('Family', [carol.id]);
+    const gid = conversationId.slice('group:'.length);
+    const before = dbGetGroup(gid);
+
+    // Bob isn't a member: his message claiming the group is dropped.
+    await bobNode.send({
+      recipientId: me.id,
+      content: {kind: 'text', text: 'let me in', group: {id: gid, name: 'Taken', members: [bob.id, me.id]}},
+    });
+    await settle();
+    expect(dbGetGroup(gid)).toEqual(before);
+    expect(dbGetConversation(conversationId).some(m => m.text === 'let me in')).toBe(false);
+  });
+
+  it('keeps a known group as stored when a member sends different details', async () => {
+    const carol = await keypair();
+    const conversationId = useMeshService.getState().createGroup('Trip', [bob.id, carol.id]);
+    const gid = conversationId.slice('group:'.length);
+    const before = dbGetGroup(gid);
+
+    await bobNode.send({
+      recipientId: me.id,
+      content: {kind: 'text', text: 'hi all', group: {id: gid, name: 'Renamed', members: [bob.id, me.id]}},
+    });
+    await settle();
+    expect(dbGetGroup(gid)).toEqual(before);
+    expect(dbGetConversation(conversationId).at(-1)!.text).toBe('hi all');
+  });
+
   it('shows the name people chose, unless you renamed them', async () => {
     expect(displayName(bob.id)).toBe('Bob');
     dbSetNickname(bob.id, 'Bobby (work)');
