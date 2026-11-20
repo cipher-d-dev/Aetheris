@@ -8,14 +8,19 @@ import {dbSetSetting} from '../db/database';
 import {formatLogTime, getLogLines} from '../utils/logBuffer';
 import Avatar from '../ui/Avatar';
 import ListRow, {Section} from '../ui/ListRow';
+import OptionSheet from '../ui/OptionSheet';
+import Logo from '../ui/Logo';
+import {AetherisBridge} from '../native/AetherisBridge';
+import {useAvatarStore} from '../store/avatarStore';
+import {formatShortId} from '../crypto/encoding';
 import Button from '../ui/Button';
 import {Icon} from '../ui/Icon';
 import {MESH_TIPS, MESH_TIPS_TITLE} from '../ui/meshStatus';
 
-const MODES: {mode: ThemeMode; label: string}[] = [
-  {mode: 'system', label: 'Auto'},
-  {mode: 'light', label: 'Light'},
-  {mode: 'dark', label: 'Dark'},
+const MODES: {value: ThemeMode; label: string; description: string; icon: string}[] = [
+  {value: 'system', label: 'Auto', description: "Follow your phone's setting", icon: 'phone-portrait-outline'},
+  {value: 'light', label: 'Light', description: 'Always light', icon: 'sunny-outline'},
+  {value: 'dark', label: 'Dark', description: 'Always dark', icon: 'moon-outline'},
 ];
 
 const POWER_MODES: PowerMode[] = ['performance', 'balanced', 'saver'];
@@ -25,8 +30,10 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const selfId = useIdentityStore(s => s.identity?.publicKeyBase58 ?? 'me');
   const mesh = useMeshService();
+  const hasPhoto = useAvatarStore(s => !!s.avatars[selfId]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [sheet, setSheet] = useState<'theme' | 'battery' | 'photo' | null>(null);
 
   const chooseMode = (m: ThemeMode) => {
     setMode(m);
@@ -35,9 +42,23 @@ export default function SettingsScreen() {
     } catch {}
   };
 
+  const editName = () => {
+    setDraft(mesh.alias);
+    setEditing(true);
+  };
+
   const saveName = () => {
     if (draft.trim()) mesh.setAlias(draft);
     setEditing(false);
+  };
+
+  const choosePhoto = async () => {
+    try {
+      const img = await AetherisBridge.pickImage(192, 70, true);
+      if (img) await mesh.setPhoto(img.data);
+    } catch (e: any) {
+      Alert.alert("Couldn't use that photo", e?.message ?? 'Try a different one.');
+    }
   };
 
   const sendReport = () => {
@@ -55,101 +76,132 @@ export default function SettingsScreen() {
 
   const tips = () => Alert.alert(MESH_TIPS_TITLE, MESH_TIPS);
 
+  const relaying = mesh.carryingForOthers;
+  const nearby = mesh.routes.length;
+
   return (
     <View style={{flex: 1, backgroundColor: t.bg}}>
-      <ScrollView contentContainerStyle={{paddingBottom: 40 + insets.bottom}}>
-        <Text accessibilityRole="header" style={[styles.title, {paddingTop: insets.top + 14, color: t.text}]}>Settings</Text>
+      <ScrollView contentContainerStyle={{paddingBottom: 32 + insets.bottom}}>
+        <Text accessibilityRole="header" style={[styles.title, {paddingTop: insets.top + 14, color: t.text}]}>
+          Settings
+        </Text>
 
-        <Pressable
-          onPress={() => {
-            setDraft(mesh.alias);
-            setEditing(true);
-          }}
-          style={({pressed}) => [styles.profile, {backgroundColor: pressed ? t.surfaceAlt : t.surface}]}>
-          <Avatar id={selfId} name={mesh.alias || '?'} size={64} />
-          <View style={{flex: 1}}>
-            <Text style={[styles.profileName, {color: t.text}]}>{mesh.alias || 'Add your name'}</Text>
-            <Text style={[styles.profileSub, {color: t.textMuted}]}>This is how people nearby see you</Text>
-          </View>
-          <Icon name="pencil" size={18} color={t.textMuted} />
-        </Pressable>
-
-        <Section title="Appearance">
-          <View style={styles.segmentWrap}>
-            <View accessibilityRole="radiogroup" style={[styles.segment, {backgroundColor: t.surfaceAlt}]}>
-              {MODES.map(m => {
-                const on = mode === m.mode;
-                return (
-                  <Pressable
-                    key={m.mode}
-                    accessibilityRole="radio"
-                    accessibilityState={{checked: on}}
-                    onPress={() => chooseMode(m.mode)}
-                    style={[styles.segmentItem, on && {backgroundColor: t.bg}]}>
-                    <Text style={[styles.segmentText, {color: on ? t.text : t.textSub}]}>{m.label}</Text>
-                  </Pressable>
-                );
-              })}
+        {/* Profile */}
+        <View style={styles.hero}>
+          <Pressable
+            onPress={() => setSheet('photo')}
+            accessibilityRole="button"
+            accessibilityLabel={hasPhoto ? 'Change profile photo' : 'Add profile photo'}
+            style={({pressed}) => [pressed && {opacity: 0.8}]}>
+            <Avatar id={selfId} name={mesh.alias || '?'} size={92} />
+            <View style={[styles.cameraBadge, {backgroundColor: t.primary, borderColor: t.bg}]}>
+              <Icon name="camera" size={15} color={t.onPrimary} />
             </View>
-          </View>
-        </Section>
-
-        <Section title="Battery">
-          <View style={styles.segmentWrap}>
-            <View accessibilityRole="radiogroup" style={[styles.segment, {backgroundColor: t.surfaceAlt}]}>
-              {POWER_MODES.map(m => {
-                const on = mesh.powerMode === m;
-                return (
-                  <Pressable
-                    key={m}
-                    accessibilityRole="radio"
-                    accessibilityState={{checked: on}}
-                    onPress={() => mesh.setPowerMode(m)}
-                    style={[styles.segmentItem, on && {backgroundColor: t.bg}]}>
-                    <Text style={[styles.segmentText, {color: on ? t.text : t.textSub}]}>{POWER_PROFILES[m].label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <Text style={[styles.profileSub, {color: t.textMuted, paddingHorizontal: 8, paddingTop: 8}]}>
-              {POWER_PROFILES[mesh.powerMode].description}
+          </Pressable>
+          <Pressable onPress={editName} accessibilityRole="button" accessibilityLabel={`Name, ${mesh.alias || 'not set'}. Edit`} style={styles.nameRow}>
+            <Text style={[styles.heroName, {color: t.text}]} numberOfLines={1}>
+              {mesh.alias || 'Add your name'}
+            </Text>
+            <Icon name="pencil" size={15} color={t.textMuted} />
+          </Pressable>
+          <View style={[styles.heroPill, {backgroundColor: t.surface}]}>
+            <View style={[styles.dot, {backgroundColor: nearby > 0 ? t.online : t.textMuted}]} />
+            <Text style={[styles.heroPillText, {color: t.textSub}]}>
+              {mesh.status !== 'running'
+                ? 'Starting…'
+                : nearby > 0
+                ? `Visible to ${nearby} ${nearby === 1 ? 'person' : 'people'} nearby`
+                : 'Visible to people nearby'}
             </Text>
           </View>
+        </View>
+
+        <Section title="Profile">
+          <ListRow icon="person" iconColor="#5A4FDB" title="Name" value={mesh.alias || 'Not set'} onPress={editName} />
+          <ListRow
+            icon="image"
+            iconColor="#EC4899"
+            title="Profile photo"
+            value={hasPhoto ? 'Set' : 'None'}
+            onPress={() => setSheet('photo')}
+          />
         </Section>
 
-        <Section title="Helping others">
+        <Section title="Preferences">
+          <ListRow
+            icon="color-palette"
+            iconColor="#0EA5E9"
+            title="Theme"
+            value={MODES.find(m => m.value === mode)?.label}
+            onPress={() => setSheet('theme')}
+          />
+          <ListRow
+            icon="battery-half"
+            iconColor="#17C964"
+            title="Battery use"
+            value={POWER_PROFILES[mesh.powerMode].label}
+            onPress={() => setSheet('battery')}
+          />
+        </Section>
+
+        <Section
+          title="Helping others"
+          footer="When someone's message needs to travel further, your phone can pass it on. It stays encrypted: you can't read it.">
           <ListRow
             icon="git-network-outline"
             iconColor="#7C3AED"
-            title={
-              mesh.carryingForOthers === 0
-                ? 'Not passing on any messages right now'
-                : `Passing on ${mesh.carryingForOthers} ${mesh.carryingForOthers === 1 ? 'message' : 'messages'} for others`
-            }
-            subtitle="Your phone passes these on when it meets someone who can deliver them. They're encrypted, so you can't read them. Uses a little battery."
+            title="Messages you're passing on"
+            value={String(relaying)}
           />
         </Section>
 
         <Section title="Help">
-          <ListRow icon="help-circle-outline" iconColor="#0EA5E9" title="Can't see someone?" onPress={tips} />
-          <ListRow
-            icon="share-outline"
-            iconColor="#F5A524"
-            title="Send a problem report"
-            subtitle="Shares technical details to help fix connection problems"
-            onPress={sendReport}
-          />
+          <ListRow icon="help-circle" iconColor="#F59E0B" title="Can't see someone?" onPress={tips} />
+          <ListRow icon="share" iconColor="#64748B" title="Send a problem report" onPress={sendReport} />
         </Section>
 
-        <Text style={[styles.about, {color: t.textMuted}]}>
-          Aetheris 1.0 · Messages travel phone to phone, encrypted end to end. No internet, no accounts.
-        </Text>
+        <View style={styles.about}>
+          <Logo size={40} />
+          <Text style={[styles.aboutName, {color: t.text}]}>Aetheris</Text>
+          <Text style={[styles.aboutText, {color: t.textMuted}]}>
+            Version 1.0 · ID {formatShortId(selfId)}
+            {'\n'}Messages travel phone to phone, encrypted end to end.{'\n'}No internet, no accounts.
+          </Text>
+        </View>
       </ScrollView>
+
+      <OptionSheet
+        visible={sheet === 'theme'}
+        title="Theme"
+        options={MODES}
+        selected={mode}
+        onSelect={chooseMode}
+        onClose={() => setSheet(null)}
+      />
+      <OptionSheet
+        visible={sheet === 'battery'}
+        title="Battery use"
+        options={POWER_MODES.map(m => ({value: m, label: POWER_PROFILES[m].label, description: POWER_PROFILES[m].description}))}
+        selected={mesh.powerMode}
+        onSelect={m => mesh.setPowerMode(m)}
+        onClose={() => setSheet(null)}
+      />
+      <OptionSheet
+        visible={sheet === 'photo'}
+        title="Profile photo"
+        options={[
+          {value: 'choose', label: hasPhoto ? 'Choose a new photo' : 'Choose a photo', icon: 'image-outline'},
+          ...(hasPhoto ? [{value: 'remove', label: 'Remove photo', icon: 'trash-outline', destructive: true}] : []),
+        ]}
+        onSelect={v => (v === 'choose' ? choosePhoto() : mesh.setPhoto(null))}
+        onClose={() => setSheet(null)}
+      />
 
       <Modal visible={editing} transparent animationType="fade" onRequestClose={() => setEditing(false)}>
         <Pressable style={[styles.backdrop, {backgroundColor: t.overlay}]} onPress={() => setEditing(false)}>
-          <Pressable style={[styles.sheet, {backgroundColor: t.bg}]}>
+          <Pressable style={[styles.dialog, {backgroundColor: t.bg}]}>
             <Text style={[Type.title, {color: t.text}]}>Your name</Text>
+            <Text style={[styles.dialogHint, {color: t.textMuted}]}>People nearby see this when they want to message you.</Text>
             <TextInput
               value={draft}
               onChangeText={setDraft}
@@ -169,16 +221,19 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: {fontFamily: Font.extraBold, fontSize: 27, letterSpacing: -0.6, paddingHorizontal: 20, paddingBottom: 12},
-  profile: {flexDirection: 'row', alignItems: 'center', gap: 14, marginHorizontal: 16, padding: 16, borderRadius: 20},
-  profileName: {fontFamily: Font.bold, fontSize: 19},
-  profileSub: {fontFamily: Font.regular, fontSize: 13, marginTop: 3},
-  segmentWrap: {padding: 8},
-  segment: {flexDirection: 'row', borderRadius: 12, padding: 3},
-  segmentItem: {flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 48, paddingVertical: 9, borderRadius: 10},
-  segmentText: {fontFamily: Font.semiBold, fontSize: 14},
-  about: {fontFamily: Font.regular, fontSize: 12.5, lineHeight: 18, textAlign: 'center', paddingHorizontal: 40, marginTop: 28},
+  title: {fontFamily: Font.extraBold, fontSize: 24, letterSpacing: -0.5, paddingHorizontal: 20},
+  hero: {alignItems: 'center', paddingTop: 10, gap: 8},
+  cameraBadge: {position: 'absolute', right: -2, bottom: -2, width: 32, height: 32, borderRadius: 16, borderWidth: 3, alignItems: 'center', justifyContent: 'center'},
+  nameRow: {flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 6, paddingHorizontal: 20, minHeight: 32},
+  heroName: {fontFamily: Font.bold, fontSize: 20, letterSpacing: -0.3, maxWidth: 260},
+  heroPill: {flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, height: 26, borderRadius: 13},
+  heroPillText: {fontFamily: Font.medium, fontSize: 12},
+  dot: {width: 7, height: 7, borderRadius: 4},
+  about: {alignItems: 'center', gap: 6, marginTop: 32, paddingHorizontal: 40},
+  aboutName: {fontFamily: Font.bold, fontSize: 15, marginTop: 4},
+  aboutText: {fontFamily: Font.regular, fontSize: 12, lineHeight: 17, textAlign: 'center'},
   backdrop: {flex: 1, justifyContent: 'center', padding: 24},
-  sheet: {borderRadius: 24, padding: 20, gap: 14},
-  input: {height: 52, borderRadius: 14, paddingHorizontal: 16, fontFamily: Font.medium, fontSize: 16},
+  dialog: {borderRadius: 22, padding: 20, gap: 12},
+  dialogHint: {fontFamily: Font.regular, fontSize: 13, lineHeight: 18, marginTop: -6},
+  input: {height: 48, borderRadius: 12, paddingHorizontal: 14, fontFamily: Font.medium, fontSize: 15.5},
 });

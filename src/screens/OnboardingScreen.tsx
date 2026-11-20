@@ -1,5 +1,5 @@
 import React, {useState} from 'react';
-import {View, Text, TextInput, StyleSheet, KeyboardAvoidingView} from 'react-native';
+import {View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Pressable, Alert} from 'react-native';
 import {openSettings} from 'react-native-permissions';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Font, Type, useThemeStore} from '../theme';
@@ -10,6 +10,8 @@ import {keyboardAvoidingBehavior, useKeyboardVisible} from '../ui/keyboard';
 import Button from '../ui/Button';
 import Avatar from '../ui/Avatar';
 import Logo from '../ui/Logo';
+import {AetherisBridge} from '../native/AetherisBridge';
+import {useAvatarStore} from '../store/avatarStore';
 import {Icon} from '../ui/Icon';
 
 /**
@@ -46,6 +48,16 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
     onDone();
   };
 
+  const hasPhoto = useAvatarStore(s => !!s.avatars[selfId]);
+  const pickPhoto = async () => {
+    try {
+      const img = await AetherisBridge.pickImage(192, 70, true);
+      if (img) await useMeshService.getState().setPhoto(img.data);
+    } catch (e: any) {
+      Alert.alert("Couldn't use that photo", e?.message ?? 'Try a different one.');
+    }
+  };
+
   if (step === 'name') {
     return (
       <KeyboardAvoidingView
@@ -60,15 +72,25 @@ export default function OnboardingScreen({onDone}: {onDone: () => void}) {
           <Text style={[styles.lead, {color: t.textSub}]}>
             People near you will see this name when they want to message you.
           </Text>
-          <View style={styles.preview}>
-            {name.trim() ? (
-              <Avatar id={selfId} name={name} size={96} />
-            ) : (
-              <View style={[styles.emptyAvatar, {backgroundColor: t.surface}]}>
-                <Icon name="person" size={44} color={t.textMuted} />
+          <Pressable
+            style={styles.preview}
+            onPress={pickPhoto}
+            accessibilityRole="button"
+            accessibilityLabel={hasPhoto ? 'Change profile photo' : 'Add a profile photo (optional)'}>
+            <View>
+              {name.trim() || hasPhoto ? (
+                <Avatar id={selfId} name={name || '?'} size={96} />
+              ) : (
+                <View style={[styles.emptyAvatar, {backgroundColor: t.surface}]}>
+                  <Icon name="person" size={44} color={t.textMuted} />
+                </View>
+              )}
+              <View style={[styles.cameraBadge, {backgroundColor: t.primary, borderColor: t.bg}]}>
+                <Icon name="camera" size={15} color={t.onPrimary} />
               </View>
-            )}
-          </View>
+            </View>
+            <Text style={[styles.photoHint, {color: t.primaryText}]}>{hasPhoto ? 'Change photo' : 'Add a photo (optional)'}</Text>
+          </Pressable>
           <TextInput
             value={name}
             onChangeText={setName}
@@ -134,6 +156,8 @@ const styles = StyleSheet.create({
   brand: {fontFamily: Font.extraBold, fontSize: 18, letterSpacing: -0.2},
   lead: {fontFamily: Font.regular, fontSize: 16, lineHeight: 24, marginTop: 10},
   preview: {alignItems: 'center', marginTop: 36, marginBottom: 24},
+  cameraBadge: {position: 'absolute', right: -2, bottom: -2, width: 32, height: 32, borderRadius: 16, borderWidth: 3, alignItems: 'center', justifyContent: 'center'},
+  photoHint: {fontFamily: Font.semiBold, fontSize: 13, marginTop: 10},
   emptyAvatar: {width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center'},
   input: {height: 58, borderRadius: 16, paddingHorizontal: 18, fontFamily: Font.semiBold, fontSize: 18},
   hero: {width: 112, height: 112, borderRadius: 34, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 28},

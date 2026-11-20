@@ -14,6 +14,7 @@ import {useDraftsStore} from './draftsStore';
 import {AetherisBridge} from '../native/AetherisBridge';
 import {isValidProfilePhoto, MeshConfig, MeshNode, ProfilePhoto} from '../mesh/meshNode';
 import {photoHash, useAvatarStore} from './avatarStore';
+import {useIdentityStore} from './identityStore';
 import {createRnCrypto} from '../mesh/rnCrypto';
 import {loadPrivateKey} from '../crypto/identity';
 import {
@@ -526,7 +527,8 @@ export const useMeshService = create<MeshState>((set, get) => {
 
     setPhoto: async (data: string | null) => {
       if (data && data.length > 24_000) throw new Error('That photo is too large');
-      const self = get().selfId;
+      // Also works before the mesh has started (e.g. during onboarding).
+      const self = get().selfId ?? useIdentityStore.getState().identity?.publicKeyBase58;
       if (data) {
         dbSetSetting('photo', data);
         dbSetSetting('photoHash', photoHash(data));
